@@ -12,7 +12,11 @@ function ready(f){document.readyState!=="loading"?f():document.addEventListener(
 ready(function(){
   // pied de page / config
   const cfg=window.SITE||{};
-  document.querySelectorAll("[data-linkedin]").forEach(a=>{a.href=cfg.linkedin||"#"});
+  document.querySelectorAll("[data-linkedin]").forEach(a=>{
+    const u=cfg.linkedin||"";
+    if(!u||/VOTRE-PROFIL/i.test(u)){a.parentElement.style.display="none";return}
+    a.href=u;
+  });
 
   // table des matières
   const toc=document.querySelector("aside.toc .links");
