@@ -1,0 +1,387 @@
+<h1>Partie 1 — Le cours</h1>
+<p class="lead">Séances 2 et 3 · Technologies, zones de confiance, DMZ, VLAN, segmentation et pare-feu. Cochez « J'ai lu cette partie » au fil de votre lecture : votre progression est enregistrée.</p>
+
+<h2 id="c0">0. Objectifs et compétences visées</h2>
+<p>À l'issue des deux séances, vous devez être capable de :</p>
+<ul>
+<li>identifier le rôle de chaque équipement (pare-feu, switch, routeur, serveur) dans une architecture sécurisée ;</li>
+<li>définir des zones de confiance et placer les services dans la bonne zone ;</li>
+<li>concevoir une DMZ et justifier sa position ;</li>
+<li>segmenter un réseau par VLAN et établir une matrice de flux ;</li>
+<li>écrire des règles de filtrage selon le principe du moindre privilège ;</li>
+<li>comparer une architecture plate et une architecture segmentée (risque de propagation latérale) ;</li>
+<li>produire un schéma d'architecture annoté et justifier vos choix.</li>
+</ul>
+<p class="small">Ces notions relèvent du bloc cybersécurité du BTS SIO (option SISR en particulier) : sécurisation des équipements et des accès, protection des données, gestion des risques.</p>
+{{READ:c0}}
+
+<h2 id="c1">1. Pourquoi une architecture sécurisée ?</h2>
+<p>Un réseau « plat », où tout communique avec tout, est simple à installer mais très fragile : la compromission d'un seul poste (hameçonnage, clé USB, vulnérabilité) permet à l'attaquant d'atteindre l'ensemble du système d'information. L'architecture sécurisée repose sur trois idées directrices :</p>
+<ul>
+<li><b>Défense en profondeur</b> : empiler plusieurs barrières indépendantes (pare-feu, segmentation, durcissement des serveurs, supervision). Si l'une tombe, les autres limitent les dégâts.</li>
+<li><b>Moindre privilège</b> : chaque utilisateur, machine ou flux n'a que les droits strictement nécessaires.</li>
+<li><b>Cloisonnement</b> : on sépare les systèmes selon leur niveau de sensibilité et d'exposition.</li>
+</ul>
+<p>On raisonne avec les critères <b>DICT</b> : Disponibilité, Intégrité, Confidentialité, Traçabilité. L'architecture doit protéger ces quatre propriétés.</p>
+{{READ:c1}}
+
+<h2 id="c2">2. Les équipements</h2>
+<h3>2.1 Le pare-feu (firewall)</h3>
+<p>Il filtre les flux entre des zones réseau selon des règles.</p>
+<div class="tw"><table>
+<tr><th>Type</th><th>Principe</th><th>Limite</th></tr>
+<tr><td>Sans état (stateless)</td><td>Examine chaque paquet isolément (IP, port, protocole)</td><td>Ne comprend pas la notion de connexion</td></tr>
+<tr><td>À états (stateful)</td><td>Suit l'état des connexions (table de sessions) ; les réponses sont autorisées automatiquement</td><td>Ne voit pas le contenu applicatif</td></tr>
+<tr><td>Applicatif / NGFW</td><td>Analyse la couche 7 : application, utilisateur, IPS, filtrage d'URL, inspection TLS</td><td>Coût et impact sur les performances</td></tr>
+<tr><td>WAF</td><td>Protège les applications web (injections SQL, XSS)</td><td>Ne protège que le trafic HTTP(S)</td></tr>
+</table></div>
+<ul>
+<li>chaque interface du pare-feu appartient à une zone (WAN, LAN, DMZ…) ;</li>
+<li>la politique par défaut doit être <b>deny all</b> : tout est interdit sauf ce qui est explicitement autorisé ;</li>
+<li>les règles sont lues de haut en bas, <b>la première qui correspond s'applique</b> ;</li>
+<li>tout est journalisé et envoyé vers un serveur central (syslog / SIEM).</li>
+</ul>
+<p class="small">Exemples : pfSense, OPNsense, Fortinet FortiGate, Palo Alto, Stormshield, Cisco ASA/FTD, iptables / nftables.</p>
+
+<h3>2.2 Le switch (commutateur)</h3>
+<p>Il travaille principalement en couche 2 (adresses MAC) ; un switch de niveau 3 sait aussi router entre VLAN. Fonctions de sécurité à connaître :</p>
+<ul>
+<li><b>VLAN</b> : séparation logique des domaines de diffusion ;</li>
+<li><b>Port security</b> : limite le nombre ou la liste d'adresses MAC par port ;</li>
+<li><b>802.1X</b> : authentification d'un équipement avant l'accès au réseau (avec un serveur RADIUS) ;</li>
+<li><b>DHCP snooping</b> et <b>Dynamic ARP Inspection</b> : contrent les faux serveurs DHCP et l'usurpation ARP ;</li>
+<li><b>BPDU guard / root guard</b> : protègent le protocole Spanning Tree ;</li>
+<li>désactivation des ports inutilisés, placés dans un VLAN « poubelle » ;</li>
+<li>administration par SSH uniquement, jamais Telnet.</li>
+</ul>
+
+<h3>2.3 Le routeur</h3>
+<p>Il achemine les paquets entre réseaux (couche 3). Il peut porter des ACL, du NAT et des tunnels VPN. Dans les petites structures, routeur et pare-feu sont souvent le même équipement.</p>
+
+<h3>2.4 Les serveurs</h3>
+<p>Chaque serveur doit être durci (<i>hardening</i>) : suppression des services et comptes inutiles ; mises à jour régulières ; pare-feu local ; authentification forte, comptes nominatifs, droits minimaux ; journalisation et sauvegardes testées ; un serveur = une fonction principale.</p>
+
+<h3>2.5 Équipements complémentaires</h3>
+<ul>
+<li><b>Reverse-proxy</b> : reçoit les requêtes externes à la place des serveurs internes, termine le TLS, filtre et répartit la charge (Nginx, HAProxy, Apache) ;</li>
+<li><b>Proxy sortant</b> : contrôle la navigation des utilisateurs ;</li>
+<li><b>IDS / IPS</b> : détection / prévention d'intrusion (Suricata, Snort) ;</li>
+<li><b>Passerelle VPN</b> : accès distant chiffré (IPsec, OpenVPN, WireGuard) ;</li>
+<li><b>SIEM / syslog</b> : centralisation et corrélation des journaux ;</li>
+<li><b>Bastion</b> : point de passage obligatoire et tracé pour l'administration.</li>
+</ul>
+{{READ:c2}}
+
+<h2 id="c3">3. Les zones de confiance</h2>
+<p>Une <b>zone de confiance</b> est un ensemble de machines partageant le même niveau de sensibilité et les mêmes règles de sécurité. Les flux entre zones passent par un point de contrôle (pare-feu).</p>
+<div class="tw"><table>
+<tr><th>Zone</th><th>Contenu</th><th>Niveau de confiance</th></tr>
+<tr><td>Internet (WAN)</td><td>Réseau public</td><td>Nul</td></tr>
+<tr><td>DMZ</td><td>Services exposés (web, mail, reverse-proxy, VPN)</td><td>Faible : zone exposée, présumée compromettable</td></tr>
+<tr><td>LAN utilisateurs</td><td>Postes de travail</td><td>Moyen</td></tr>
+<tr><td>Zone serveurs internes</td><td>AD, fichiers, bases de données, applications métier</td><td>Élevé</td></tr>
+<tr><td>Management</td><td>Interfaces d'administration, supervision, bastion</td><td>Très élevé</td></tr>
+<tr><td>Invités (guests)</td><td>Wi-Fi visiteurs</td><td>Faible, accès Internet uniquement</td></tr>
+</table></div>
+<div class="box rule"><b>Règle sur le sens des flux</b>Une zone de confiance plus faible ne doit pas pouvoir initier de connexion vers une zone plus sensible. Les flux autorisés sont définis explicitement dans une matrice de flux.</div>
+{{READ:c3}}
+
+<h2 id="c4">4. Première approche de la DMZ</h2>
+<p>La <b>DMZ</b> (zone démilitarisée) est un réseau intermédiaire entre Internet et le réseau interne, destiné à héberger les services qui doivent être accessibles depuis l'extérieur.</p>
+<div class="box key"><b>Idée clé</b>Un serveur exposé à Internet sera tôt ou tard attaqué. On l'isole donc pour que, s'il est compromis, l'attaquant ne puisse pas rebondir facilement vers le réseau interne.</div>
+<ul>
+<li>Internet peut accéder aux services de la DMZ, uniquement sur les ports publiés ;</li>
+<li>la DMZ ne peut pas initier de connexion vers le LAN (ou seulement des flux très précis et justifiés) ;</li>
+<li>le LAN peut accéder à la DMZ (administration, mises à jour) ;</li>
+<li>aucune donnée sensible n'est stockée en DMZ.</li>
+</ul>
+<p>Cette version à un seul pare-feu à trois interfaces (WAN / DMZ / LAN) est la première approche ; elle est approfondie ci-dessous.</p>
+<div class="q"><b class="k">Activité</b><br>À partir d'un cas d'entreprise (50 postes, un site web, une messagerie, un AD) : 1) listez les équipements et les services ; 2) classez chaque élément dans une zone de confiance ; 3) esquissez un schéma à trois zones (WAN / DMZ / LAN).
+<textarea data-save="c4-activite" placeholder="Vos notes (enregistrées automatiquement)…"></textarea></div>
+{{READ:c4}}
+
+<h2 id="c5">5. Objectifs et positionnement de la DMZ</h2>
+<p>Objectifs : exposer des services sans exposer le réseau interne ; limiter la surface d'attaque ; contenir une compromission ; centraliser la surveillance des flux exposés.</p>
+<div class="tw"><table>
+<tr><th>Modèle</th><th>Description</th><th>Avantages</th><th>Inconvénients</th></tr>
+<tr><td>DMZ sur interface dédiée (pare-feu « à 3 pattes »)</td><td>Un seul pare-feu, trois interfaces : WAN, DMZ, LAN</td><td>Simple, économique</td><td>Point de défaillance unique ; une faille du pare-feu expose tout</td></tr>
+<tr><td>Double pare-feu (DMZ « en sandwich »)</td><td>Pare-feu externe, DMZ, pare-feu interne</td><td>Meilleure défense en profondeur ; technologies différentes possibles</td><td>Coût et complexité</td></tr>
+</table></div>
+<p>Le modèle à double pare-feu est celui retenu comme architecture type du cours.</p>
+{{READ:c5}}
+
+<h2 id="c6">6. Architecture type</h2>
+<svg class="diag" viewBox="0 0 760 470" role="img" aria-label="Architecture à double pare-feu : Internet, pare-feu externe, DMZ, pare-feu interne, quatre VLAN">
+<rect x="180" y="10" width="400" height="38" rx="8" fill="#9ca3af" fill-opacity=".35" stroke="#6b7280"/><text class="t" x="380" y="34" text-anchor="middle">INTERNET (non fiable)</text>
+<text x="380" y="68" text-anchor="middle">HTTPS 443 · SMTP 25 · VPN</text>
+<path d="M380 48v28" stroke="#6b7280" stroke-width="2"/>
+<rect x="280" y="76" width="200" height="34" rx="8" fill="#b91c1c"/><text x="380" y="98" text-anchor="middle" fill="#fff" style="fill:#fff;font-weight:700">Pare-feu externe</text>
+<path d="M380 110v22" stroke="#6b7280" stroke-width="2"/>
+<rect x="90" y="132" width="580" height="104" rx="10" fill="#f59e0b" fill-opacity=".18" stroke="#c2410c" stroke-width="1.5"/>
+<text class="t" x="380" y="152" text-anchor="middle">DMZ 172.16.50.0/24 (VLAN 50) — zone exposée</text>
+<rect x="115" y="168" width="120" height="50" rx="8" fill="#f59e0b" fill-opacity=".5"/><text x="175" y="190" text-anchor="middle">Reverse-proxy</text><text x="175" y="206" text-anchor="middle">TLS</text>
+<rect x="255" y="168" width="120" height="50" rx="8" fill="#f59e0b" fill-opacity=".5"/><text x="315" y="190" text-anchor="middle">Serveur web</text><text x="315" y="206" text-anchor="middle">frontal</text>
+<rect x="395" y="168" width="120" height="50" rx="8" fill="#f59e0b" fill-opacity=".5"/><text x="455" y="190" text-anchor="middle">Relais mail</text><text x="455" y="206" text-anchor="middle">anti-spam</text>
+<rect x="535" y="168" width="115" height="50" rx="8" fill="#f59e0b" fill-opacity=".5"/><text x="592" y="190" text-anchor="middle">Passerelle</text><text x="592" y="206" text-anchor="middle">VPN</text>
+<path d="M380 236v22" stroke="#6b7280" stroke-width="2"/><text x="392" y="252">flux précis uniquement</text>
+<rect x="280" y="258" width="200" height="34" rx="8" fill="#b91c1c"/><text x="380" y="280" text-anchor="middle" style="fill:#fff;font-weight:700">Pare-feu interne</text>
+<path d="M380 292v22" stroke="#6b7280" stroke-width="2"/>
+<rect x="250" y="314" width="260" height="30" rx="8" fill="#0e7490" fill-opacity=".35" stroke="#0e7490"/><text x="380" y="334" text-anchor="middle">Switch cœur L3 (802.1Q)</text>
+<path d="M380 344v14M105 358h550M105 358v16M285 358v16M475 358v16M655 358v16" stroke="#6b7280" stroke-width="2" fill="none"/>
+<rect x="20" y="374" width="170" height="80" rx="8" fill="#3b82f6" fill-opacity=".3" stroke="#1d4ed8"/><text class="t" x="105" y="396" text-anchor="middle">VLAN 10 Utilisateurs</text><text x="105" y="418" text-anchor="middle">192.168.10.0/24</text>
+<rect x="200" y="374" width="170" height="80" rx="8" fill="#22c55e" fill-opacity=".3" stroke="#15803d"/><text class="t" x="285" y="396" text-anchor="middle">VLAN 20 Serveurs / AD</text><text x="285" y="418" text-anchor="middle">192.168.20.0/24</text>
+<rect x="390" y="374" width="170" height="80" rx="8" fill="#a855f7" fill-opacity=".3" stroke="#7e22ce"/><text class="t" x="475" y="396" text-anchor="middle">VLAN 30 Management</text><text x="475" y="418" text-anchor="middle">192.168.30.0/24</text>
+<rect x="570" y="374" width="170" height="80" rx="8" fill="#9ca3af" fill-opacity=".3" stroke="#6b7280"/><text class="t" x="655" y="396" text-anchor="middle">VLAN 40 Guests</text><text x="655" y="418" text-anchor="middle">192.168.40.0/24</text><text x="655" y="436" text-anchor="middle">(Internet seul)</text>
+</svg>
+<p class="small">Lecture : Internet ↔ Pare-feu ↔ DMZ ↔ Pare-feu ↔ Réseau interne ↔ VLAN serveurs / AD. Les flux initiés du moins fiable vers le plus sensible sont interdits par défaut.</p>
+<div class="box key"><b>Pourquoi deux pare-feu ?</b>Un attaquant doit franchir deux barrières distinctes. Si le pare-feu externe est contourné, la DMZ reste isolée du réseau interne par le second, idéalement d'un autre constructeur pour éviter une faille commune.</div>
+{{READ:c6}}
+
+<h2 id="c7">7. Segmentation par VLAN</h2>
+<p>Un <b>VLAN</b> (Virtual LAN, norme IEEE 802.1Q) découpe un switch en plusieurs réseaux logiques indépendants. Chaque VLAN correspond à un sous-réseau IP distinct, et le trafic inter-VLAN passe obligatoirement par un équipement de niveau 3 (switch L3 ou pare-feu) où l'on applique le filtrage.</p>
+<h3>7.1 Plan de segmentation type</h3>
+<div class="tw"><table>
+<tr><th>VLAN</th><th>Nom</th><th>Sous-réseau</th><th>Contenu</th></tr>
+<tr><td>10</td><td>Utilisateurs</td><td>192.168.10.0/24</td><td>Postes de travail</td></tr>
+<tr><td>20</td><td>Serveurs</td><td>192.168.20.0/24</td><td>AD, fichiers, bases de données, applications</td></tr>
+<tr><td>30</td><td>Management</td><td>192.168.30.0/24</td><td>Administration des équipements, supervision, bastion</td></tr>
+<tr><td>40</td><td>Guests</td><td>192.168.40.0/24</td><td>Wi-Fi invités, accès Internet seulement</td></tr>
+<tr><td>50</td><td>DMZ</td><td>172.16.50.0/24</td><td>Services exposés</td></tr>
+<tr><td>99</td><td>Poubelle</td><td>—</td><td>Ports inutilisés, désactivés</td></tr>
+</table></div>
+<h3>7.2 Notions techniques</h3>
+<ul>
+<li><b>Port d'accès (access)</b> : appartient à un seul VLAN, pour un poste ou un serveur ;</li>
+<li><b>Port trunk</b> : transporte plusieurs VLAN, avec étiquette 802.1Q, entre switchs ou vers le pare-feu ;</li>
+<li><b>VLAN natif</b> : à changer (pas le VLAN 1) et à ne pas utiliser pour des données ;</li>
+<li><b>Routage inter-VLAN</b> : « router-on-a-stick » (sous-interfaces sur le pare-feu) ou interfaces virtuelles (SVI) sur un switch L3.</li>
+</ul>
+<h3>7.3 Attaques à connaître</h3>
+<ul>
+<li><b>VLAN hopping</b> (switch spoofing, double tagging) : parade = désactiver la négociation DTP, fixer les ports en mode access, changer le VLAN natif ;</li>
+<li><b>ARP spoofing, DHCP spoofing</b> : parade = Dynamic ARP Inspection, DHCP snooping ;</li>
+<li>accès non autorisé par une prise réseau : parade = 802.1X, port security.</li>
+</ul>
+<div class="box key"><b>À retenir</b>Un VLAN n'est pas une barrière de sécurité à lui seul : c'est le filtrage entre VLAN qui apporte la sécurité.</div>
+{{READ:c7}}
+
+<h2 id="c8">8. Règles de filtrage</h2>
+<h3>8.1 Principes</h3>
+<ol>
+<li>Politique par défaut : <b>deny all</b>, puis on autorise le strict nécessaire (liste blanche).</li>
+<li><b>Moindre privilège</b> : on précise source, destination, protocole et port ; on évite « any ».</li>
+<li><b>Sens des flux</b> : on définit qui initie la connexion. Avec un pare-feu à états, les réponses sont autorisées automatiquement.</li>
+<li>Ports strictement nécessaires : chaque règle est justifiée, documentée et revue périodiquement.</li>
+<li>Journalisation des refus et des flux sensibles.</li>
+<li>Ordre des règles : du plus spécifique au plus général, la règle finale étant le refus.</li>
+</ol>
+<h3>8.2 Matrice de flux (exemple)</h3>
+<div class="tw"><table>
+<tr><th>Source</th><th>Destination</th><th>Service / port</th><th>Décision</th><th>Justification</th></tr>
+<tr><td>Internet</td><td>Reverse-proxy (DMZ)</td><td>TCP 443</td><td>Autorisé</td><td>Publication du site web en HTTPS</td></tr>
+<tr><td>Internet</td><td>Relais mail (DMZ)</td><td>TCP 25</td><td>Autorisé</td><td>Réception des mails</td></tr>
+<tr><td>Internet</td><td>VPN (DMZ)</td><td>UDP 1194 / 51820</td><td>Autorisé</td><td>Accès distant des nomades</td></tr>
+<tr><td>Internet</td><td>LAN / serveurs</td><td>Tous</td><td>Refusé</td><td>Aucun accès direct au réseau interne</td></tr>
+<tr><td>Reverse-proxy (DMZ)</td><td>Serveur applicatif interne</td><td>TCP 8080</td><td>Autorisé</td><td>Flux précis, une seule destination</td></tr>
+<tr><td>Relais mail (DMZ)</td><td>Messagerie interne</td><td>TCP 25</td><td>Autorisé</td><td>Remise des mails entrants</td></tr>
+<tr><td>DMZ</td><td>VLAN Utilisateurs</td><td>Tous</td><td>Refusé</td><td>Empêcher le rebond depuis une zone exposée</td></tr>
+<tr><td>VLAN Utilisateurs</td><td>Internet</td><td>TCP 80/443, DNS</td><td>Autorisé (via proxy)</td><td>Navigation</td></tr>
+<tr><td>VLAN Utilisateurs</td><td>VLAN Serveurs</td><td>SMB 445, LDAP / Kerberos selon besoin</td><td>Autorisé (précis)</td><td>Ressources et AD</td></tr>
+<tr><td>VLAN Utilisateurs</td><td>VLAN Management</td><td>Tous</td><td>Refusé</td><td>Aucun accès à l'administration</td></tr>
+<tr><td>VLAN Management</td><td>Tous les VLAN</td><td>SSH 22, RDP 3389, SNMPv3</td><td>Autorisé (source limitée)</td><td>Administration depuis le bastion seulement</td></tr>
+<tr><td>VLAN Guests</td><td>Internet</td><td>TCP 80/443, DNS</td><td>Autorisé</td><td>Accès visiteurs</td></tr>
+<tr><td>VLAN Guests</td><td>Réseaux internes</td><td>Tous</td><td>Refusé</td><td>Isolation totale</td></tr>
+<tr><td>Serveurs</td><td>Internet</td><td>443 via proxy</td><td>Autorisé (limité)</td><td>Mises à jour uniquement</td></tr>
+</table></div>
+<h3>8.3 Exemple de règles (syntaxe générique)</h3>
+<pre><span class="d"># Règle 10 : publier le site en HTTPS</span>
+allow tcp from any to 172.16.50.10 port 443 log
+<span class="d"># Règle 20 : reverse-proxy vers l'application interne</span>
+allow tcp from 172.16.50.10 to 192.168.20.20 port 8080
+<span class="d"># Règle 99 : refus par défaut</span>
+deny ip from any to any log</pre>
+{{READ:c8}}
+
+<h2 id="c9">9. Architecture plate vs architecture segmentée</h2>
+<div class="tw"><table>
+<tr><th>Critère</th><th>Architecture plate</th><th>Architecture segmentée</th></tr>
+<tr><td>Principe</td><td>Un seul réseau pour tous</td><td>Zones et VLAN séparés, filtrage entre zones</td></tr>
+<tr><td>Propagation latérale</td><td>Très facile : un poste compromis atteint tous les serveurs</td><td>Limitée : chaque saut est contrôlé par le pare-feu</td></tr>
+<tr><td>Surface d'attaque</td><td>Large</td><td>Réduite</td></tr>
+<tr><td>Détection</td><td>Difficile (flux mélangés)</td><td>Facilitée (flux inter-zones journalisés)</td></tr>
+<tr><td>Impact d'un ransomware</td><td>Chiffrement potentiel de tout le SI</td><td>Cantonné à la zone touchée</td></tr>
+<tr><td>Conformité (RGPD, ISO 27001, ANSSI)</td><td>Insuffisante</td><td>Recommandée</td></tr>
+<tr><td>Complexité et coût</td><td>Faibles</td><td>Plus élevés (conception, administration)</td></tr>
+<tr><td>Performances</td><td>Aucun filtrage interne</td><td>Léger surcoût de filtrage</td></tr>
+</table></div>
+<p><b>Propagation latérale</b> (<i>lateral movement</i>) : après une première intrusion, l'attaquant explore le réseau, vole des identifiants, puis se déplace de machine en machine jusqu'aux cibles de valeur (AD, bases de données). La segmentation multiplie les obstacles et les points de détection.</p>
+<div class="box key"><b>Exemple concret</b>Dans un réseau plat, un poste infecté par un ransomware peut chiffrer les partages du serveur de fichiers et atteindre l'AD. Dans un réseau segmenté, le poste n'a accès au serveur de fichiers que par les ports strictement nécessaires, l'AD est dans un VLAN protégé et les sauvegardes dans une zone dédiée.</div>
+{{READ:c9}}
+
+<h2 id="c10">10. Services placés en DMZ</h2>
+<div class="tw"><table>
+<tr><th>Service</th><th>Rôle</th><th>Bonnes pratiques</th></tr>
+<tr><td>Serveur web</td><td>Site vitrine, portail</td><td>HTTPS, WAF, pas de base de données locale ; la base reste en zone interne, accessible par un flux précis</td></tr>
+<tr><td>Reverse-proxy</td><td>Point d'entrée unique, terminaison TLS, filtrage</td><td>Masque l'architecture interne, répartition de charge, limitation de débit</td></tr>
+<tr><td>Relais de messagerie</td><td>Reçoit et filtre les mails avant remise</td><td>SPF, DKIM, DMARC, antivirus, anti-spam</td></tr>
+<tr><td>Passerelle VPN</td><td>Accès distant sécurisé</td><td>Authentification multifacteur, droits limités par profil</td></tr>
+<tr><td>DNS public (autoritaire)</td><td>Résolution des noms de l'entreprise</td><td>Séparé du DNS interne (split DNS)</td></tr>
+<tr><td>Serveur SFTP</td><td>Échange de fichiers avec des partenaires</td><td>SFTP uniquement, comptes isolés</td></tr>
+</table></div>
+<div class="box rule"><b>À ne pas mettre en DMZ</b>L'annuaire Active Directory, les bases de données de production, les serveurs de fichiers internes, les sauvegardes.</div>
+{{READ:c10}}
+
+<h2 id="c11">11. Durcissement et surveillance de la DMZ</h2>
+<ul>
+<li>serveurs minimalistes, à jour, sans compte inutile ;</li>
+<li>IDS / IPS sur les flux entrants ;</li>
+<li>journaux envoyés vers un SIEM situé en zone interne ;</li>
+<li>tests réguliers : scan de vulnérabilités, test d'intrusion ;</li>
+<li>plan de réaction en cas de compromission : isoler la DMZ en coupant les règles du pare-feu interne.</li>
+</ul>
+{{READ:c11}}
+
+<h2 id="c12">12. Livrable : schéma d'architecture annoté</h2>
+<p>Un schéma (draw.io, Packet Tracer, Visio, Lucidchart) faisant apparaître : les zones avec une couleur par niveau de confiance ; les équipements (pare-feu externe et interne, switch cœur, serveurs, reverse-proxy, VPN, bastion) ; les flux fléchés (sens d'initiation, protocole, port) ; le plan d'adressage et les numéros de VLAN. Il est accompagné d'une matrice de flux et d'une justification des choix.</p>
+<h3>Plan type de justification</h3>
+<ul>
+<li>Contexte et besoins : taille de l'entreprise, services à exposer, données sensibles ;</li>
+<li>Risques identifiés : intrusion externe, propagation latérale, ransomware, fuite de données ;</li>
+<li>Choix d'architecture : pourquoi un double pare-feu, pourquoi ces VLAN, pourquoi tel service en DMZ ;</li>
+<li>Politique de filtrage : deny all, moindre privilège, ports retenus ;</li>
+<li>Mesures complémentaires : durcissement, supervision, sauvegardes, 802.1X, MFA ;</li>
+<li>Limites et améliorations : coûts, évolutions possibles (zero trust, microsegmentation).</li>
+</ul>
+<div class="tw"><table><tr><th>Critère d'évaluation indicatif</th><th>Points</th></tr>
+<tr><td>Zones et équipements cohérents et complets</td><td>5</td></tr><tr><td>Flux représentés et justes (sens, ports)</td><td>5</td></tr><tr><td>Respect du moindre privilège</td><td>4</td></tr><tr><td>Justification argumentée des choix</td><td>4</td></tr><tr><td>Qualité et lisibilité du schéma</td><td>2</td></tr><tr><th>Total</th><th>20</th></tr></table></div>
+{{READ:c12}}
+
+<h2 id="c13">13. Exercices corrigés</h2>
+<p>Essayez de répondre avant d'ouvrir la correction.</p>
+<details><summary>Exercice 1 — Un serveur web en DMZ doit interroger une base de données interne. Quelle règle écrire ?</summary><p>Autoriser uniquement serveur web (DMZ) vers serveur BDD (VLAN serveurs) sur le port du SGBD (par exemple TCP 3306 ou 5432), via le pare-feu interne ; aucun autre flux DMZ vers interne. Mieux encore : placer un serveur applicatif intermédiaire pour ne pas exposer directement la base.</p></details>
+<details><summary>Exercice 2 — Pourquoi le VLAN Guests ne doit-il pas pouvoir joindre le VLAN Serveurs ?</summary><p>Les invités sont des équipements non maîtrisés, potentiellement infectés ou malveillants ; leur donner accès aux serveurs violerait le moindre privilège et créerait un chemin de propagation.</p></details>
+<details><summary>Exercice 3 — Un poste du VLAN Utilisateurs est compromis. Citez trois mesures de l'architecture qui limitent l'impact.</summary><p>Filtrage inter-VLAN (ports précis vers les serveurs), VLAN Management inaccessible aux utilisateurs, journalisation et détection des flux anormaux, 802.1X et comptes à privilèges limités, sauvegardes isolées.</p></details>
+<details><summary>Exercice 4 — Quelle est la différence entre un VLAN et une DMZ ?</summary><p>Le VLAN est un mécanisme technique de séparation de couche 2 ; la DMZ est un concept de zone de sécurité destinée aux services exposés, qui s'implémente souvent à l'aide d'un VLAN dédié et de règles de pare-feu.</p></details>
+{{READ:c13}}
+
+<h2 id="c14">14. Points clés à retenir</h2>
+<ul>
+<li>Défense en profondeur, moindre privilège, cloisonnement.</li>
+<li>Pare-feu : deny all par défaut, règles précises, journalisation.</li>
+<li>Zones de confiance : une zone moins fiable n'initie pas de flux vers une zone plus sensible.</li>
+<li>DMZ : services exposés isolés, double pare-feu pour une meilleure protection.</li>
+<li>VLAN : séparation logique, utile seulement avec un filtrage entre VLAN.</li>
+<li>Architecture segmentée : limite la propagation latérale et l'impact d'un incident.</li>
+<li>Le livrable doit montrer et justifier : un schéma sans justification est incomplet.</li>
+</ul>
+{{READ:c14}}
+
+<h2 id="c15">15. Lexique</h2>
+<div class="tw"><table><tr><th>Terme</th><th>Définition</th></tr>
+<tr><td>802.1Q</td><td>Norme IEEE de balisage des VLAN : ajoute une étiquette (tag) dans la trame Ethernet.</td></tr>
+<tr><td>802.1X</td><td>Contrôle d'accès au réseau par port : l'équipement s'authentifie (souvent via RADIUS).</td></tr>
+<tr><td>ACL</td><td>Liste de règles autorisant ou refusant des flux sur un routeur ou un switch.</td></tr>
+<tr><td>AD (Active Directory)</td><td>Annuaire Microsoft centralisant utilisateurs, machines et droits.</td></tr>
+<tr><td>ARP spoofing</td><td>Usurpation ARP : l'attaquant associe sa MAC à l'IP d'une autre machine.</td></tr>
+<tr><td>Bastion</td><td>Serveur de rebond obligatoire et journalisé pour administrer les équipements sensibles.</td></tr>
+<tr><td>BPDU guard</td><td>Protection d'un port d'accès contre des trames Spanning Tree non attendues.</td></tr>
+<tr><td>Cloisonnement</td><td>Séparation des systèmes selon leur sensibilité pour limiter la propagation d'un incident.</td></tr>
+<tr><td>DHCP snooping</td><td>Le switch n'autorise les réponses DHCP que depuis des ports de confiance.</td></tr>
+<tr><td>DICT</td><td>Disponibilité, Intégrité, Confidentialité, Traçabilité.</td></tr>
+<tr><td>Défense en profondeur</td><td>Superposition de plusieurs couches de protection indépendantes.</td></tr>
+<tr><td>DMZ</td><td>Zone démilitarisée : réseau intermédiaire hébergeant les services exposés.</td></tr>
+<tr><td>Deny all</td><td>Politique par défaut refusant tout flux non explicitement autorisé.</td></tr>
+<tr><td>Split DNS</td><td>Séparation entre DNS public (zone exposée) et DNS interne.</td></tr>
+<tr><td>Durcissement (hardening)</td><td>Réduction de la surface d'attaque : services, comptes et ports inutiles supprimés.</td></tr>
+<tr><td>IDS / IPS</td><td>Détection / prévention d'intrusion.</td></tr>
+<tr><td>Moindre privilège</td><td>Ne donner que les droits strictement nécessaires.</td></tr>
+<tr><td>Matrice de flux</td><td>Tableau listant source, destination, protocole, port et décision.</td></tr>
+<tr><td>MFA</td><td>Authentification multifacteur.</td></tr>
+<tr><td>NAT</td><td>Traduction d'adresses : remplace les adresses IP privées par une adresse publique, et inversement.</td></tr>
+<tr><td>NGFW</td><td>Pare-feu applicatif avec IPS, filtrage d'URL, identification des utilisateurs.</td></tr>
+<tr><td>Port security</td><td>Limite les adresses MAC autorisées sur un port du switch.</td></tr>
+<tr><td>Propagation latérale</td><td>Déplacement d'un attaquant de machine en machine après une première intrusion.</td></tr>
+<tr><td>Pare-feu stateful</td><td>Suit les connexions et autorise automatiquement les réponses.</td></tr>
+<tr><td>RADIUS</td><td>Protocole d'authentification centralisée des accès réseau.</td></tr>
+<tr><td>Reverse-proxy</td><td>Serveur frontal recevant les requêtes externes et les relayant vers des serveurs internes.</td></tr>
+<tr><td>Router-on-a-stick</td><td>Routage inter-VLAN via des sous-interfaces sur un seul lien trunk.</td></tr>
+<tr><td>SIEM</td><td>Collecte, corrèle et analyse les journaux.</td></tr>
+<tr><td>SPF / DKIM / DMARC</td><td>Authentification des domaines de messagerie contre l'usurpation.</td></tr>
+<tr><td>SVI</td><td>Interface de niveau 3 d'un VLAN sur un switch L3.</td></tr>
+<tr><td>Surface d'attaque</td><td>Ensemble des points par lesquels un attaquant peut tenter d'entrer.</td></tr>
+<tr><td>Trunk</td><td>Lien transportant plusieurs VLAN entre deux équipements.</td></tr>
+<tr><td>VLAN hopping</td><td>Attaque permettant de sortir de son VLAN (switch spoofing, double tagging).</td></tr>
+<tr><td>VPN</td><td>Tunnel chiffré entre un utilisateur ou un site et le réseau de l'entreprise.</td></tr>
+<tr><td>WAF</td><td>Filtre les attaques visant les applications web.</td></tr>
+<tr><td>Zero trust</td><td>Aucun flux ni utilisateur n'est approuvé par défaut : vérification systématique.</td></tr>
+<tr><td>Zone de confiance</td><td>Ensemble de systèmes partageant le même niveau de sensibilité et les mêmes règles.</td></tr>
+</table></div>
+<p class="small">Pour aller plus loin : guides de l'ANSSI (architecture d'un système d'information, guide d'hygiène informatique, sécurisation de l'administration) ; Packet Tracer, GNS3, pfSense / OPNsense, Wireshark.</p>
+{{READ:c15}}
+
+<h2 id="c16">FAQ — Questions d'un novice</h2><p>Les questions que se pose naturellement un étudiant qui découvre l'architecture sécurisée. Cliquez sur une question pour afficher la réponse.</p>
+<h3>Concepts de base</h3>
+<details><summary>Q1. C'est quoi exactement une « architecture sécurisée » ?</summary><p>C'est l'organisation du réseau de façon à ce qu'un problème sur une machine (poste infecté, serveur web piraté…) ne permette pas à l'attaquant d'atteindre facilement tout le reste. On sépare les zones, on filtre les flux et on applique le moindre privilège.</p></details>
+<details><summary>Q2. Pourquoi on ne laisse pas tout le monde communiquer avec tout le monde ?</summary><p>Un réseau « plat » est très fragile. Si un seul poste est compromis (clé USB, phishing…), l'attaquant peut se déplacer latéralement et atteindre les serveurs critiques (Active Directory, bases de données…).</p></details>
+<details><summary>Q3. C'est quoi la « défense en profondeur » ?</summary><p>Empiler plusieurs protections indépendantes (pare-feu + segmentation + durcissement des serveurs + supervision…). Si une barrière tombe, les autres limitent les dégâts.</p></details>
+<details><summary>Q4. C'est quoi le « moindre privilège » ?</summary><p>Chaque utilisateur, machine et flux n'a que les droits strictement nécessaires. On n'ouvre jamais « any → any » sur un pare-feu.</p></details>
+<details><summary>Q5. À quoi servent les critères DICT ?</summary><p>Disponibilité, Intégrité, Confidentialité, Traçabilité : l'architecture doit protéger ces quatre propriétés.</p></details>
+<h3>Les couches du modèle OSI</h3>
+<details><summary>Q6. Il y a combien de couches dans le modèle OSI ?</summary><p>7 couches (Open Systems Interconnection), le modèle de référence en formation réseau et cybersécurité.</p></details>
+<details><summary>Q7. Quelles sont les 7 couches ?</summary><p>7 Application (HTTP, DNS, SMTP) · 6 Présentation (TLS, JPEG) · 5 Session (RPC) · 4 Transport (TCP, UDP, ports) · 3 Réseau (IP, routeur, switch L3, pare-feu) · 2 Liaison de données (Ethernet, MAC, switch, VLAN) · 1 Physique (câbles, fibre). Les couches 2 et 3 sont le cœur du cours.</p></details>
+<details><summary>Q8. C'est quoi la « couche 3 » ?</summary><p>La couche Réseau : elle utilise les adresses IP et permet à des machines de réseaux différents de communiquer (routage). Routeurs, switchs L3 et pare-feu y travaillent.</p></details>
+<details><summary>Q9. Quelle différence entre couche 2 et couche 3 ?</summary><p>Couche 2 : adresses MAC, même réseau local (même VLAN), équipement typique = switch. Couche 3 : adresses IP, communication entre réseaux différents, équipement typique = routeur / switch L3 / pare-feu.</p></details>
+<details><summary>Q10. Le cours concerne-t-il toutes les couches ?</summary><p>Non : surtout les couches 2 et 3, avec des extensions vers la couche 4 (ports) et la couche 7 (services, NGFW, WAF).</p></details>
+<h3>Switch et VLAN</h3>
+<details><summary>Q11. Quelle différence entre un hub et un switch ?</summary><p>Le hub diffuse à tout le monde (peu sécurisé, collisions) ; le switch lit l'adresse MAC de destination et n'envoie la trame qu'au destinataire (plus performant et plus sûr).</p></details>
+<details><summary>Q12. Qu'est-ce qu'un VLAN ?</summary><p>Une technologie qui découpe un switch physique en plusieurs sous-réseaux logiques étanches. Il faut un switch manageable, et si deux VLAN doivent communiquer, le trafic passe obligatoirement par un routeur ou un switch L3. Un VLAN n'est pas une barrière de sécurité à lui seul : c'est le filtrage entre VLAN qui protège.</p></details>
+<details><summary>Q13. Pourquoi créer un VLAN Management, Guests, poubelle… ?</summary><p>Management : isole l'administration et la supervision. Guests : Wi-Fi visiteurs, Internet uniquement. Poubelle : ports inutilisés (désactivés). On change aussi le VLAN natif (souvent 1 par défaut) pour limiter le VLAN hopping.</p></details>
+<h3>Les types de pare-feu</h3>
+<details><summary>Q14. Un pare-feu, ça fait quoi concrètement ?</summary><p>Il regarde les flux entre les zones et décide de les autoriser ou de les bloquer selon des règles : c'est le point de contrôle obligatoire entre les zones de confiance.</p></details>
+<details><summary>Q15. Quels sont les principaux types de pare-feu ?</summary><p>Sans état (paquet par paquet), à états (suit les connexions), applicatif / NGFW (couche 7, IPS, inspection TLS), WAF (applications web : injection SQL, XSS).</p></details>
+<details><summary>Q16. Différence entre stateless et stateful ?</summary><p>Stateless : chaque paquet est examiné isolément, il faut des règles dans les deux sens. Stateful : une table de sessions ; une fois la connexion autorisée, les réponses passent automatiquement. C'est le type le plus courant.</p></details>
+<details><summary>Q17. C'est quoi un NGFW ?</summary><p>Next-Generation Firewall : il analyse aussi la couche 7 (application, utilisateur, IPS, inspection TLS). Plus précis, mais plus cher et plus gourmand.</p></details>
+<details><summary>Q18. C'est quoi un WAF ?</summary><p>Web Application Firewall : protège uniquement les applications web. Il complète le pare-feu réseau, souvent placé devant les serveurs web en DMZ.</p></details>
+<details><summary>Q19. Pare-feu matériel ou logiciel ?</summary><p>Matériel : boîtier dédié entre les zones (Fortinet, Palo Alto, Stormshield, pfSense…). Logiciel : programme sur la machine (Windows Firewall, iptables…). En entreprise on utilise les deux.</p></details>
+<details><summary>Q20. Pourquoi « deny all » par défaut ?</summary><p>Tout ce qui n'est pas explicitement autorisé est interdit (liste blanche) : c'est plus sûr que d'interdire au cas par cas.</p></details>
+<details><summary>Q21. Comment le pare-feu lit-il ses règles ?</summary><p>De haut en bas ; la première règle qui correspond s'applique, puis on s'arrête. L'ordre est donc très important.</p></details>
+<h3>Pare-feu et antivirus</h3>
+<details><summary>Q22. Quelle différence entre pare-feu et antivirus ?</summary><p>Le pare-feu filtre le trafic réseau entrant et sortant (cible : connexions, adresses IP, ports) comme un garde-frontière. L'antivirus analyse les fichiers et programmes présents sur l'appareil (cible : virus, vers, chevaux de Troie, ransomwares) comme une sentinelle interne. Ils sont complémentaires : le pare-feu stoppe la menace avant la porte, l'antivirus la neutralise si elle s'est installée.</p></details>
+<h3>Le proxy</h3>
+<details><summary>Q23. C'est quoi un proxy ?</summary><p>Un serveur mandataire : un intermédiaire entre votre appareil et Internet. Votre requête est envoyée au proxy, qui la transmet au site, reçoit la réponse et vous la renvoie. Le site ne voit que l'adresse IP du proxy.</p></details>
+<details><summary>Q24. À quoi sert un proxy ?</summary><p>Masquer l'adresse IP, filtrer le contenu (entreprises, écoles), mettre en cache des pages pour économiser de la bande passante, contourner des restrictions géographiques.</p></details>
+<details><summary>Q25. Quels sont les principaux types de proxy ?</summary><p>Proxy web (forward proxy), proxy transparent (sans configuration côté utilisateur), proxy anonyme (cache l'IP mais signale l'usage d'un proxy), proxy inverse (reverse proxy, placé devant des serveurs web).</p></details>
+<details><summary>Q26. Proxy vs VPN ?</summary><p>Le proxy s'applique souvent à une application ou un navigateur et ne chiffre pas systématiquement ; le VPN chiffre l'intégralité du trafic de l'appareil et offre une sécurité globale bien supérieure.</p></details>
+<details><summary>Q27. Comment configurer un proxy ?</summary><p>Il faut l'adresse (IP ou nom), le port (souvent 8080, 3128 ou 80) et éventuellement un identifiant. Windows : Paramètres → Réseau et Internet → Proxy → Configuration manuelle, activer « Utiliser un serveur proxy », saisir adresse et port. macOS : Réglages Système → Réseau → connexion active → Détails → Proxys. Chrome et Edge utilisent les réglages du système ; Firefox a les siens (Paramètres → Général → Paramètres réseau → Configuration manuelle du proxy).</p></details>
+<details><summary>Q28. C'est quoi un bastion ?</summary><p>Un serveur (ou une zone) par lequel passent obligatoirement toutes les connexions d'administration, toutes tracées. On n'administre plus les équipements directement depuis Internet ou le LAN utilisateurs.</p></details>
+<details><summary>Q29. À quoi sert un reverse-proxy ?</summary><p>Il reçoit les requêtes d'Internet à la place des vrais serveurs web, termine le TLS, filtre et peut répartir la charge. Les serveurs réels restent protégés derrière.</p></details>
+<h3>Zones de confiance et DMZ</h3>
+<details><summary>Q30. C'est quoi une zone de confiance ?</summary><p>Un ensemble de machines qui ont le même niveau de sensibilité et les mêmes règles de sécurité. Les flux entre zones passent obligatoirement par un pare-feu.</p></details>
+<details><summary>Q31. Pourquoi mettre les services exposés dans une DMZ ?</summary><p>Un serveur accessible depuis Internet sera tôt ou tard attaqué. En DMZ, même compromis, l'attaquant n'a pas d'accès direct au réseau interne.</p></details>
+<details><summary>Q32. La DMZ est-elle « sûre » ?</summary><p>Non, on la considère comme compromettable. C'est pourquoi on interdit (ou on limite très fortement) les connexions de la DMZ vers le LAN.</p></details>
+<details><summary>Q33. Stocke-t-on des données sensibles en DMZ ?</summary><p>Jamais. Les bases de données et fichiers importants restent dans le réseau interne.</p></details>
+<details><summary>Q34. Pourquoi un double pare-feu ?</summary><p>Avec un seul pare-feu, s'il est contourné tout est exposé. Avec deux, l'attaquant doit franchir deux barrières distinctes : défense en profondeur.</p></details>
+<details><summary>Q35. Peut-on mettre l'Active Directory en DMZ ?</summary><p>Non : l'AD est critique, il reste dans la zone serveurs internes. Règle d'or : une zone de confiance plus faible ne doit pas pouvoir initier de connexion vers une zone plus sensible.</p></details>
+<h3>Règles de filtrage et sens des flux</h3>
+<details><summary>Q36. Comment écrire une bonne règle de pare-feu ?</summary><p>On précise source + destination + protocole + port, on évite « any », on part de « deny all » puis on ouvre uniquement le nécessaire.</p></details>
+<details><summary>Q37. Pourquoi s'intéresse-t-on au sens des flux ?</summary><p>Une zone peu fiable ne doit pas pouvoir initier de connexion vers une zone plus sensible. Exemple : la DMZ ne doit pas se connecter librement au LAN.</p></details>
+<details><summary>Q38. Avec un pare-feu stateful, faut-il autoriser les réponses ?</summary><p>Non : une fois la connexion autorisée dans un sens, les paquets de réponse sont acceptés automatiquement.</p></details>
+<details><summary>Q39. Peut-on autoriser « any → any » sur le port 443 ?</summary><p>Non. Même sur 443, on limite les sources et les destinations ; « any → any » est presque toujours une mauvaise idée.</p></details>
+<h3>Architecture plate vs segmentée</h3>
+<details><summary>Q40. Qu'est-ce qu'une architecture plate ?</summary><p>Tout est dans le même réseau, tout le monde peut communiquer avec tout le monde. Simple à installer, très risqué en cas de compromission.</p></details>
+<details><summary>Q41. Quel est son principal danger ?</summary><p>La propagation latérale : une fois un poste infecté, l'attaquant atteint facilement les serveurs critiques.</p></details>
+<details><summary>Q42. Pourquoi l'architecture segmentée est-elle meilleure ?</summary><p>Elle limite les mouvements de l'attaquant : même s'il compromet un poste, il se heurte à des filtres avant d'atteindre l'AD ou les bases de données.</p></details>
+<h3>Questions pratiques — le livrable</h3>
+<details><summary>Q43. Que dois-je obligatoirement faire apparaître dans le schéma ?</summary><p>Les zones (Internet, DMZ, LAN utilisateurs, serveurs, management, guests), les pare-feu (externe et interne de préférence), les VLAN avec leurs sous-réseaux, les principaux services, les flux autorisés et une légende claire.</p></details>
+<details><summary>Q44. Comment justifier mes choix ?</summary><p>Expliquer pourquoi tel service est en DMZ, pourquoi deux pare-feu, pourquoi ces VLAN, quelles règles principales s'appliquent et comment on limite la propagation latérale.</p></details>
+<details><summary>Q45. Est-ce grave si mon schéma n'est pas « parfait » graphiquement ?</summary><p>Non : ce qui compte est la logique de sécurité (zones bien définies, sens des flux respecté, moindre privilège, justification claire).</p></details>
+<h3>Erreurs fréquentes de débutants</h3>
+<details><summary>Q46. Quelles sont les erreurs les plus courantes ?</summary><p>Mettre l'AD ou une base de données en DMZ · autoriser la DMZ à initier librement des connexions vers le LAN · oublier le VLAN Management · mettre tous les serveurs dans le VLAN des utilisateurs · écrire des règles « any → any » · croire qu'un VLAN suffit · laisser le VLAN 1 par défaut partout · confondre pare-feu et antivirus · oublier que les règles sont lues de haut en bas.</p></details>
+<h3>Liens avec le reste du programme</h3>
+<details><summary>Q47. Pourquoi parle-t-on déjà de Zero Trust ?</summary><p>La segmentation (DMZ + VLAN) est une première étape. Zero Trust va plus loin : « never trust, always verify », même à l'intérieur du réseau.</p></details>
+<details><summary>Q48. Ce cours prépare-t-il à l'analyse de documents techniques ?</summary><p>Oui : savoir lire un schéma d'architecture, repérer les faiblesses et proposer des améliorations est une compétence très demandée.</p></details>
+<details><summary>Q49. Faut-il connaître des constructeurs précis ?</summary><p>Non pour l'examen : on attend la compréhension des principes (zones, filtrage, moindre privilège). Les noms de solutions sont des exemples.</p></details>
+<details><summary>Q50. Combien de VLAN au minimum dans un schéma type examen ?</summary><p>Au moins : utilisateurs, serveurs/AD, management, guests, DMZ. Le VLAN « poubelle » est un plus.</p></details>
+<details><summary>Q51. Comment se souvenir du sens des flux ?</summary><p>« Du moins fiable vers le plus sensible = interdit par défaut. » Internet → DMZ possible (ports publiés) ; DMZ → LAN = non (ou flux très précis et justifiés).</p></details>
+<div class="box key"><b>Avant de rendre un schéma, posez-vous trois questions</b>1) Où sont les données sensibles ? 2) Qui peut y accéder et comment ? 3) Si un serveur de la DMZ est compromis, jusqu'où l'attaquant peut-il aller ?</div>
+{{READ:c16}}

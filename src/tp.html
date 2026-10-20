@@ -1,0 +1,902 @@
+<h1>Partie 2 — Travaux pratiques</h1>
+<p class="lead">Réseau sécurisé pas à pas : DMZ, VLAN, pare-feu. Tutoriel sur Proxmox VE, pfSense et Kali Linux — environ 20 h. Chaque étape indique sur quelle machine travailler, quoi taper et ce que vous devez voir.</p>
+
+<h2 id="tp-intro">Avant de commencer</h2>
+<p>Ce cahier prolonge le cours « Architecture sécurisée ». Vous allez construire, configurer, attaquer puis durcir une architecture complète : double pare-feu, DMZ, VLAN, reverse-proxy, serveurs internes et supervision. Tout fonctionne sur un seul hôte Proxmox VE ; Kali Linux joue l'attaquant (depuis « Internet » ou depuis un poste interne compromis) et sert à vérifier que les règles font bien ce qu'on attend d'elles.</p>
+<div class="box key"><b>Principe pédagogique</b>On ne se contente pas de configurer : chaque règle est prouvée par un test. Un flux autorisé doit fonctionner, un flux interdit doit échouer, et le blocage doit apparaître dans les journaux.</div>
+<div class="box rule"><b>Règle absolue — cadre légal</b>Les outils de Kali Linux ne s'utilisent que sur le laboratoire de la classe, sur les adresses indiquées dans ce cahier. Scanner ou attaquer un système sans autorisation écrite est un délit (accès frauduleux, articles 323-1 et suivants du Code pénal). Ne jamais lancer un scan vers le réseau de l'établissement ou vers Internet. Vérifiez toujours l'adresse cible avant d'appuyer sur Entrée.</div>
+
+<h3>Objectifs</h3>
+<ul>
+<li>déployer un laboratoire virtualisé (bridges Linux, VLAN 802.1Q, machines clonées depuis des gabarits) ;</li>
+<li>installer et configurer deux pare-feu (pfSense ou OPNsense), des zones de confiance et une politique deny all ;</li>
+<li>publier un service via un reverse-proxy en DMZ (NAT, redirection de ports, TLS) ;</li>
+<li>segmenter le réseau interne en VLAN et filtrer les flux inter-VLAN selon le moindre privilège ;</li>
+<li>auditer l'architecture avec nmap et Kali Linux, comparer réseau plat et réseau segmenté ;</li>
+<li>durcir les serveurs (SSH, pare-feu local, services inutiles), centraliser les journaux ;</li>
+<li>produire des livrables professionnels : schéma annoté, matrice de flux, fiche de recette, rapport d'audit.</li>
+</ul>
+
+<h3>Organisation et durée</h3>
+<div class="tw"><table>
+<tr><th>TP</th><th>Titre</th><th>Durée</th><th>Notion du cours</th></tr>
+<tr><td>TP0</td><td>Préparer la plateforme Proxmox</td><td>1 h 30</td><td>Équipements, virtualisation</td></tr>
+<tr><td>TP1</td><td>Réseau plat : mesurer le risque</td><td>1 h 30</td><td>Architecture plate, propagation latérale</td></tr>
+<tr><td>TP2</td><td>Installer les pare-feu et les zones</td><td>2 h</td><td>Pare-feu, zones de confiance</td></tr>
+<tr><td>TP3</td><td>VLAN et réseau interne</td><td>2 h</td><td>VLAN, segmentation, deny all</td></tr>
+<tr><td>TP4</td><td>DMZ, reverse-proxy et NAT</td><td>2 h</td><td>DMZ, services exposés</td></tr>
+<tr><td>TP5</td><td>Matrice de flux et règles de filtrage</td><td>2 h</td><td>Moindre privilège, sens des flux</td></tr>
+<tr><td>TP6</td><td>Audit avec Kali et fiche de recette</td><td>2 h</td><td>Tests, preuves, journaux</td></tr>
+<tr><td>TP7</td><td>Durcissement et journalisation</td><td>2 h</td><td>Défense en profondeur</td></tr>
+<tr><td>TP8</td><td>Projet final et livrable</td><td>2 h + travail perso</td><td>Schéma annoté + justification</td></tr>
+</table></div>
+<p><b>Parcours minimal (≈ 10 h)</b> : TP0, TP2, TP3, TP4, TP5, TP6. Les TP1, TP7 et TP8 complètent la démarche (comparaison, durcissement, livrable noté).</p>
+
+<h3>Matériel nécessaire</h3>
+<div class="tw"><table>
+<tr><th></th><th>Configuration minimale</th><th>Configuration confortable</th></tr>
+<tr><td>Hôte Proxmox</td><td>8 cœurs, 16 Go de RAM, 200 Go de disque</td><td>12 cœurs, 32 Go de RAM, 500 Go de SSD</td></tr>
+<tr><td>Kali Linux</td><td>Une seule VM qu'on déplace de réseau en réseau</td><td>Deux VM : KALI-EXT et KALI-INT</td></tr>
+<tr><td>Poste élève</td><td colspan="2">Un navigateur web (interface Proxmox sur le port 8006) + client SSH</td></tr>
+<tr><td>Pas de serveur ?</td><td colspan="2">Proxmox s'installe dans une VM sur votre PC (virtualisation imbriquée, 16 Go de RAM) : voir l'option « laboratoire sur son PC » ci-dessous.</td></tr>
+</table></div>
+
+<h3>Comment lire ce cahier</h3>
+<div class="tw"><table>
+<tr><th>Élément</th><th>Signification</th></tr>
+<tr><td><span class="on-bar on-pve">Sur : machine</span></td><td>La machine sur laquelle travailler. Couleur : rouge pare-feu, orange DMZ, vert serveurs, gris Kali, bleu Proxmox.</td></tr>
+<tr><td>Bloc noir</td><td>Ce que vous voyez dans un terminal. Seul le texte blanc après l'invite est à taper ; vert = réponse attendue, rouge = erreur ou flux bloqué, jaune = avertissement, gris = commentaire. Le bouton « Copier » ne copie que les commandes.</td></tr>
+<tr><td>Encadré vert / orange</td><td>« Résultat attendu » à comparer avec votre écran / « Si cela ne fonctionne pas » : pannes fréquentes et remèdes.</td></tr>
+<tr><td>Cadres de réponse</td><td>Ils préparent le rapport final. Ce que vous écrivez est enregistré automatiquement dans votre navigateur.</td></tr>
+<tr><td>Validation de fin de TP</td><td>À cocher avant de passer au suivant ; prenez un snapshot Proxmox.</td></tr>
+</table></div>
+<div class="box ko"><b>Les adresses et noms d'interface peuvent différer</b>Les consoles montrent des exemples (interface <code>ens18</code>, adresse NAT de votre hyperviseur, numéros de version). Adaptez ce qui est propre à votre machine ; les adresses du laboratoire (203.0.113.x, 172.16.50.x, 192.168.x.x) restent identiques.</div>
+
+<h3>Architecture cible</h3>
+<svg class="diag" viewBox="0 0 780 520" role="img" aria-label="Architecture du laboratoire Proxmox">
+<rect x="6" y="6" width="768" height="508" rx="12" fill="none" stroke="#1d4ed8" stroke-width="2" stroke-dasharray="6 4"/><text class="t" x="20" y="26" style="fill:#1d4ed8">Hôte Proxmox VE (pve1)</text>
+<rect x="250" y="40" width="280" height="50" rx="8" fill="#9ca3af" fill-opacity=".3" stroke="#6b7280"/><text class="t" x="390" y="62" text-anchor="middle">KALI-EXT 203.0.113.100</text><text x="390" y="80" text-anchor="middle">vmbr3 · WAN-LAB 203.0.113.0/24 (isolé)</text>
+<path d="M390 90v28" stroke="#6b7280" stroke-width="2"/>
+<rect x="250" y="118" width="280" height="52" rx="8" fill="#b91c1c"/><text class="t" x="390" y="140" text-anchor="middle" style="fill:#fff">FW-EXT (pfSense)</text><text x="390" y="158" text-anchor="middle" style="fill:#fff">WAN .1 · DMZ 172.16.50.1</text>
+<path d="M390 170v28" stroke="#6b7280" stroke-width="2"/>
+<rect x="230" y="198" width="320" height="52" rx="8" fill="#f59e0b" fill-opacity=".35" stroke="#c2410c"/><text class="t" x="390" y="220" text-anchor="middle">RP-DMZ (Nginx) 172.16.50.10</text><text x="390" y="238" text-anchor="middle">vmbr1 · DMZ 172.16.50.0/24</text>
+<path d="M390 250v28" stroke="#6b7280" stroke-width="2"/>
+<rect x="250" y="278" width="280" height="52" rx="8" fill="#b91c1c"/><text class="t" x="390" y="300" text-anchor="middle" style="fill:#fff">FW-INT (pfSense)</text><text x="390" y="318" text-anchor="middle" style="fill:#fff">DMZ .2 · VLAN 10/20/30/40 .1</text>
+<path d="M390 330v24" stroke="#6b7280" stroke-width="2"/>
+<rect x="60" y="354" width="660" height="30" rx="8" fill="#1d4ed8" fill-opacity=".25" stroke="#1d4ed8"/><text x="390" y="374" text-anchor="middle">vmbr2 — VLAN aware (trunk 802.1Q) : une VM = un port, un tag = un VLAN</text>
+<path d="M120 384v26M270 384v26M420 384v26M570 384v26M680 384v26" stroke="#6b7280" stroke-width="2"/>
+<rect x="40" y="410" width="160" height="56" rx="8" fill="#3b82f6" fill-opacity=".3"/><text class="t" x="120" y="432" text-anchor="middle">PC-CLIENT / KALI-INT</text><text x="120" y="450" text-anchor="middle">tag 10 / 30 / 40</text>
+<rect x="200" y="410" width="140" height="56" rx="8" fill="#22c55e" fill-opacity=".3"/><text class="t" x="270" y="432" text-anchor="middle">SRV-APP</text><text x="270" y="450" text-anchor="middle">tag 20 · .20.20</text>
+<rect x="350" y="410" width="140" height="56" rx="8" fill="#22c55e" fill-opacity=".3"/><text class="t" x="420" y="432" text-anchor="middle">SRV-BDD</text><text x="420" y="450" text-anchor="middle">tag 20 · .20.30</text>
+<rect x="500" y="410" width="140" height="56" rx="8" fill="#a855f7" fill-opacity=".3"/><text class="t" x="570" y="432" text-anchor="middle">SRV-LOG</text><text x="570" y="450" text-anchor="middle">tag 30 · .30.20</text>
+<text x="20" y="494" style="font-size:11px">VLAN 10 Utilisateurs 192.168.10.0/24 · VLAN 20 Serveurs .20.0/24 · VLAN 30 Management .30.0/24 · VLAN 40 Guests .40.0/24</text>
+<text x="20" y="508" style="font-size:11px">vmbr4 (FLAT 192.168.100.0/24, sans pare-feu) : TP1 uniquement · vmbr0 : administration / installation des paquets</text>
+</svg>
+
+<h3>Plan d'adressage et d'identification</h3>
+<div class="tw"><table>
+<tr><th>VM (VMID)</th><th>Rôle</th><th>Bridge / tag</th><th>Adresse IP</th></tr>
+<tr><td>FW-EXT (100)</td><td>Pare-feu externe pfSense</td><td>vmbr3 (WAN) + vmbr1 (DMZ)</td><td>WAN 203.0.113.1/24 ; DMZ 172.16.50.1/24</td></tr>
+<tr><td>FW-INT (101)</td><td>Pare-feu interne pfSense</td><td>vmbr1 (côté DMZ) + vmbr2 (trunk, sans tag)</td><td>172.16.50.2/24 ; .1 dans chaque VLAN</td></tr>
+<tr><td>RP-DMZ (110)</td><td>Reverse-proxy Nginx</td><td>vmbr1</td><td>172.16.50.10/24</td></tr>
+<tr><td>SRV-APP (120)</td><td>Application web interne (port 8080)</td><td>vmbr2, tag 20</td><td>192.168.20.20/24</td></tr>
+<tr><td>SRV-BDD (121)</td><td>Base de données MariaDB</td><td>vmbr2, tag 20</td><td>192.168.20.30/24</td></tr>
+<tr><td>SRV-LOG (122)</td><td>Collecteur syslog</td><td>vmbr2, tag 30</td><td>192.168.30.20/24</td></tr>
+<tr><td>PC-CLIENT (130)</td><td>Poste Debian XFCE (change de VLAN selon le test)</td><td>vmbr2, tag 10 / 30 / 40</td><td>DHCP (VLAN 10 et 40), 192.168.30.10 (VLAN 30)</td></tr>
+<tr><td>KALI-EXT (140)</td><td>Attaquant sur « Internet »</td><td>vmbr3</td><td>203.0.113.100/24</td></tr>
+<tr><td>KALI-INT (141)</td><td>Poste interne compromis / audit</td><td>vmbr2, tag 10 ou 40</td><td>DHCP</td></tr>
+</table></div>
+<p>Gabarits : VM 900 (<code>tpl-debian</code>) et VM 901 (<code>tpl-kali</code>). <b>Convention</b> : un snapshot à la fin de chaque TP (<code>tp2-ok</code>, <code>tp3-ok</code>…) pour revenir en arrière en cas d'erreur.</p>
+{{DONE:tp-intro}}
+
+<h2 id="tp-pc">Option : le laboratoire sur son propre PC</h2>
+<p>Proxmox VE est installé dans une machine virtuelle appelée <b>pve1</b>, et toutes les machines du TP tournent à l'intérieur (virtualisation imbriquée). Machines environ 30 à 50 % plus lentes qu'avec Proxmox sur un serveur : démarrez-les progressivement. Un PC à processeur Apple (M1 et suivants) ne convient pas (Proxmox et Kali du TP sont en x86). La virtualisation (Intel VT-x ou AMD-V) doit être activée dans le BIOS/UEFI.</p>
+<div class="tw"><table>
+<tr><th>Ressource</th><th>Minimum</th><th>Confortable</th></tr>
+<tr><td>Processeur</td><td>4 cœurs / 8 threads avec VT-x ou AMD-V</td><td>6 cœurs ou plus</td></tr>
+<tr><td>Mémoire vive</td><td>16 Go (dont 10 Go pour pve1)</td><td>32 Go (dont 14 Go pour pve1)</td></tr>
+<tr><td>Disque</td><td>120 Go libres, SSD fortement conseillé</td><td>200 Go sur SSD</td></tr>
+</table></div>
+<div class="tw"><table>
+<tr><th>Hyperviseur</th><th>Quand le choisir</th><th>Fiabilité de l'imbrication</th></tr>
+<tr><td>VMware Workstation</td><td>Windows ou Linux ; le plus simple</td><td>Très bonne</td></tr>
+<tr><td>Hyper-V</td><td>Windows 10/11 Pro, Éducation ou Entreprise</td><td>Très bonne</td></tr>
+<tr><td>Linux / KVM (virt-manager)</td><td>Poste sous Linux</td><td>Excellente</td></tr>
+<tr><td>VirtualBox</td><td>Si aucun autre choix</td><td>Variable : à tester (étape V)</td></tr>
+</table></div>
+<div class="box ko"><b>Windows : conflits possibles</b>Hyper-V, WSL2, Docker Desktop ou l'« intégrité de la mémoire » peuvent empêcher VMware Workstation ou VirtualBox d'exposer la virtualisation à la VM. Si le test de l'étape V échoue, désactivez ces fonctions (puis redémarrez) ou utilisez Hyper-V.</div>
+
+<h3>Créer la VM pve1 selon votre hyperviseur</h3>
+<details><summary>Guide A — VMware Workstation</summary>
+<ol>
+<li>File &gt; New Virtual Machine, <b>Custom (advanced)</b> ; « I will install the operating system later » ; Linux, Debian 12.x 64-bit ; nom <code>pve1</code>.</li>
+<li>1 processeur, <b>4 cœurs</b> ; mémoire <b>10240 Mo</b> (profil léger) ou 14336 Mo ; réseau <b>NAT</b> ; disque 100 Go, sans « Allocate all disk space now ».</li>
+<li>Customize Hardware… &gt; Processors : cocher <b>Virtualize Intel VT-x/EPT or AMD-V/RVI</b> (indispensable). New CD/DVD : l'ISO de Proxmox VE.</li>
+<li>Edit &gt; Virtual Network Editor &gt; VMnet8 &gt; NAT Settings : notez le sous-réseau et la passerelle (exemple : 192.168.199.0/24, passerelle 192.168.199.2).</li>
+</ol></details>
+<details><summary>Guide B — VirtualBox</summary>
+<ol>
+<li>Nouvelle : nom <code>pve1</code>, ISO Proxmox, Linux / Debian 64-bit ; cochez <b>Skip Unattended Installation</b> ; 10240 Mo, 4 processeurs, disque 100 Go.</li>
+<li>Configuration &gt; Système &gt; Processeur : <b>Enable Nested VT-x/AMD-V</b>. Si la case est grisée :</li>
+</ol>
+<pre class="sh">PS C:\Program Files\Oracle\VirtualBox&gt; .\VBoxManage.exe modifyvm "pve1" --nested-hw-virt on
+$ .\VBoxManage.exe showvminfo "pve1" | Select-String "Nested"
+OK: Nested VT-x/AMD-V: enabled</pre>
+<ol start="3"><li>Réseau : NAT, redirections de ports : <code>pve-web</code> TCP 127.0.0.1:8006 → 10.0.2.15:8006 ; <code>pve-ssh</code> TCP 127.0.0.1:2222 → 10.0.2.15:22.</li></ol></details>
+<details><summary>Guide C — Hyper-V (Windows Pro, Éducation, Entreprise)</summary>
+<pre class="sh">## PowerShell en administrateur — activer Hyper-V puis redémarrer
+$ Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All
+## Réseau NAT fixe pour le laboratoire
+$ New-VMSwitch -SwitchName "LAB-NAT" -SwitchType Internal
+$ New-NetIPAddress -IPAddress 192.168.77.1 -PrefixLength 24 -InterfaceAlias "vEthernet (LAB-NAT)"
+$ New-NetNat -Name LABNAT -InternalIPInterfaceAddressPrefix 192.168.77.0/24
+## Après création de la VM pve1 (Génération 2, 10240 Mo sans mémoire dynamique, disque 100 Go, ISO Proxmox)
+$ Set-VMProcessor -VMName pve1 -Count 4 -ExposeVirtualizationExtensions $true
+$ Set-VMNetworkAdapter -VMName pve1 -MacAddressSpoofing On
+$ Set-VMFirmware -VMName pve1 -EnableSecureBoot Off</pre></details>
+<details><summary>Guide D — Linux / KVM</summary>
+<pre class="sh">$ cat /sys/module/kvm_intel/parameters/nested
+OK: Y
+$ sudo apt install -y qemu-kvm libvirt-daemon-system virtinst virt-manager
+$ sudo usermod -aG libvirt,kvm $USER
+$ sudo virt-install --name pve1 --memory 10240 --vcpus 4 --cpu host-passthrough \
+&gt;  --disk size=100,format=qcow2,bus=virtio --cdrom ~/iso/proxmox-ve.iso \
+&gt;  --os-variant debian12 --network network=default,model=virtio --graphics spice</pre>
+<p class="small">Processeur AMD : remplacez <code>kvm_intel</code> par <code>kvm_amd</code> (la valeur peut être 1).</p></details>
+
+<h3>Étape P — Installer Proxmox VE dans pve1</h3>
+{{ON:pve|PROXMOX|fenêtre de la VM pve1 (installateur graphique)}}
+<ol>
+<li>Menu de démarrage : <b>Install Proxmox VE (Graphical)</b> ; accepter l'EULA.</li>
+<li>Target Harddisk : le disque de 100 Go, système de fichiers <b>ext4</b>.</li>
+<li>Pays France, fuseau Europe/Paris, clavier French. Mot de passe root (à noter), e-mail <code>admin@lab.local</code>.</li>
+<li>Management Network : hostname <code>pve1.lab.local</code> ; IP, passerelle et DNS selon le tableau.</li>
+<li>Install ; à la fin, éjecter l'ISO et laisser redémarrer.</li>
+</ol>
+<div class="tw"><table>
+<tr><th>Hyperviseur</th><th>IP (CIDR)</th><th>Passerelle</th><th>DNS</th><th>Interface web</th></tr>
+<tr><td>VMware (exemple)</td><td>192.168.199.100/24</td><td>192.168.199.2</td><td>192.168.199.2</td><td>https://192.168.199.100:8006</td></tr>
+<tr><td>VirtualBox</td><td>10.0.2.15/24</td><td>10.0.2.2</td><td>10.0.2.3</td><td>https://127.0.0.1:8006</td></tr>
+<tr><td>Hyper-V (LAB-NAT)</td><td>192.168.77.10/24</td><td>192.168.77.1</td><td>1.1.1.1</td><td>https://192.168.77.10:8006</td></tr>
+<tr><td>Linux / KVM</td><td>192.168.122.10/24</td><td>192.168.122.1</td><td>192.168.122.1</td><td>https://192.168.122.10:8006</td></tr>
+</table></div>
+
+<h3>Étape V — Vérifier que l'imbrication fonctionne</h3>
+{{ON:pve|PROXMOX|console de pve1, connexion root}}
+<pre class="sh">$ grep -c -E 'vmx|svm' /proc/cpuinfo
+OK: 4
+$ lscpu | grep -i virtualization
+OK: Virtualization: VT-x
+$ ls -l /dev/kvm
+OK: crw-rw---- 1 root kvm 10, 232 Oct 20 10:12 /dev/kvm</pre>
+<div class="box ok"><b>Résultat attendu</b>Le premier nombre est supérieur à 0 et le fichier <code>/dev/kvm</code> existe.</div>
+<div class="box ko"><b>Si cela ne fonctionne pas</b>Résultat 0 et pas de <code>/dev/kvm</code> : l'hyperviseur n'expose pas la virtualisation (reprenez l'étape d'activation ; désactivez Hyper-V / WSL2 / intégrité de la mémoire sous Windows avec VMware ou VirtualBox). Virtualisation absente : activez VT-x ou SVM Mode dans le BIOS. Rien ne marche avec VirtualBox : utilisez VMware, Hyper-V ou KVM.</div>
+<p>Connectez-vous ensuite à l'interface web (navigateur du PC, adresse du tableau, avancé &gt; continuer malgré le certificat auto-signé, utilisateur <code>root</code>, realm « Linux PAM »). Pour pouvoir faire <code>apt update</code> : Datacenter &gt; pve1 &gt; Updates &gt; Repositories, désactivez <code>pve-enterprise</code> (et la ligne ceph enterprise), puis Add &gt; <b>No-Subscription</b>.</p>
+
+<h3>Étape N — Créer le bridge d'installation vmbr9</h3>
+{{ON:pve|PROXMOX|console de pve1}}
+<p>Sur un serveur, les machines préparées au TP0 utilisent <code>vmbr0</code> pour accéder à Internet. Sur PC, on crée à la place <code>vmbr9</code> qui partage la connexion de pve1. Partout où le cahier parle du « bridge d'installation », utilisez <b>vmbr9</b> (PC) ou <b>vmbr0</b> (serveur).</p>
+<pre class="sh">$ nano /etc/network/interfaces
+## ajoutez ce bloc en fin de fichier :
+auto vmbr9
+iface vmbr9 inet static
+    address 10.99.99.1/24
+    bridge-ports none
+    bridge-stp off
+    bridge-fd 0
+    post-up   echo 1 &gt; /proc/sys/net/ipv4/ip_forward
+    post-up   iptables -t nat -A POSTROUTING -s 10.99.99.0/24 -o vmbr0 -j MASQUERADE
+    post-down iptables -t nat -D POSTROUTING -s 10.99.99.0/24 -o vmbr0 -j MASQUERADE
+#NAT-INSTALLATION</pre>
+<pre class="sh">$ ifreload -a
+$ ip -br a show vmbr9
+OK: vmbr9 UP 10.99.99.1/24
+$ iptables -t nat -L POSTROUTING -n
+OK: MASQUERADE all -- 10.99.99.0/24 0.0.0.0/0</pre>
+<p>Une machine rattachée à vmbr9 reçoit une adresse fixe dans 10.99.99.0/24, passerelle 10.99.99.1, DNS 1.1.1.1. Une fois la préparation terminée, <b>détachez chaque machine de vmbr9</b> : le laboratoire doit être isolé pendant les tests et les scans.</p>
+
+<h3>Profil léger (PC de 16 Go)</h3>
+<div class="tw"><table>
+<tr><th>Machine</th><th>Profil standard</th><th>Profil léger</th></tr>
+<tr><td>VM Proxmox (pve1)</td><td>14 Go, 6 vCPU</td><td>10 Go, 4 vCPU</td></tr>
+<tr><td>FW-EXT, FW-INT</td><td>2 Go chacun</td><td>1 Go chacun</td></tr>
+<tr><td>RP-DMZ, SRV-APP, SRV-LOG</td><td>1 Go chacun</td><td>512 Mo chacun</td></tr>
+<tr><td>SRV-BDD</td><td>1 Go</td><td>768 Mo</td></tr>
+<tr><td>PC-CLIENT + KALI-EXT + KALI-INT</td><td>1 poste Debian + 2 Kali</td><td>Un seul Kali (3 Go, 2 vCPU) qui joue les trois rôles</td></tr>
+<tr><td>Faux Internet (203.0.113.100)</td><td>Serveur web sur KALI-EXT</td><td>Conteneur WEB-EXT (128 Mo)</td></tr>
+</table></div>
+<p>Profil léger : partout où le cahier parle de PC-CLIENT, KALI-INT ou KALI-EXT, utilisez la même VM KALI en modifiant son bridge et son VLAN Tag. Sur vmbr3 (rôle KALI-EXT), donnez-lui <code>203.0.113.101/24</code> (l'adresse .100 est réservée à WEB-EXT, créé au TP5).</p>
+<ul>
+<li><b>Ordre de démarrage</b> : FW-EXT, FW-INT, serveurs, puis Kali ; n'allumez que ce dont le TP a besoin.</li>
+<li><b>Deux niveaux de sauvegarde</b> : snapshots Proxmox de chaque VM et snapshot de pve1 dans l'hyperviseur avant les manipulations risquées.</li>
+<li><b>Portabilité</b> : exportez pve1 (OVA ou copie du disque) pour reprendre sur un autre poste.</li>
+<li><b>Ressources</b> : secteur branché, applications gourmandes fermées, mise en veille désactivée.</li>
+</ul>
+<div class="box ko"><b>Si cela ne fonctionne pas</b>« KVM virtualisation unavailable » : imbrication non active (étape V). Tout est très lent : trop de VM allumées ou disque mécanique. Pas d'accès à https://adresse:8006 : VirtualBox, vérifier la redirection de port ; sinon <code>ip -br a</code> sur la console de pve1. Pas d'Internet sur vmbr9 : vérifier MASQUERADE, l'adresse 10.99.99.x, la passerelle et le DNS.</div>
+{{CHK:pc|La VM pve1 démarre et l'interface web de Proxmox s'ouvre depuis le navigateur du PC;;/dev/kvm est présent dans pve1;;Le bridge vmbr9 fonctionne (10.99.99.1/24);;Le profil (standard ou léger) est choisi}}
+{{DONE:tp-pc}}
+
+<h2 id="tp0">TP0 — Préparer la plateforme Proxmox</h2>
+<p><b>Durée</b> 1 h 30 à 2 h · <b>Objectif</b> disposer d'un hôte Proxmox avec cinq bridges, un gabarit Debian, un gabarit Kali et des serveurs prêts à l'emploi · <b>À rendre</b> captures (bridges, VM, gabarits) et réponses aux questions.</p>
+<div class="box key"><b>Rappel : le bridge d'installation</b>Pour installer des paquets, les machines ont besoin d'Internet temporairement : <code>vmbr0</code> (serveur) ou <code>vmbr9</code> (PC). Dans la suite : « bridge d'installation ».</div>
+
+<div class="step"><h4><span class="num">0.1</span> Créer les bridges du laboratoire</h4></div>
+{{ON:pve|PROXMOX|Datacenter &gt; pve1 &gt; System &gt; Network}}
+<ol>
+<li>Create &gt; Linux Bridge ; laissez <i>Bridge ports</i> vide.</li>
+<li>Créez <b>vmbr1</b> (comment : DMZ), <b>vmbr3</b> (WAN-LAB), <b>vmbr4</b> (FLAT).</li>
+<li>Créez <b>vmbr2</b> (TRUNK-INTERNE) en cochant en plus <b>VLAN aware</b> : c'est ce qui permet d'utiliser les VLAN.</li>
+<li>Cliquez sur <b>Apply Configuration</b>.</li>
+</ol>
+<div class="tw"><table><tr><th>Bridge</th><th>Rôle</th><th>Bridge ports</th><th>VLAN aware</th></tr>
+<tr><td>vmbr0</td><td>Existant : administration</td><td>carte existante</td><td>non</td></tr>
+<tr><td>vmbr1</td><td>DMZ</td><td>vide</td><td>non</td></tr>
+<tr><td>vmbr2</td><td>Trunk interne (VLAN 10, 20, 30, 40)</td><td>vide</td><td><b>oui</b></td></tr>
+<tr><td>vmbr3</td><td>WAN-LAB (« Internet » simulé)</td><td>vide</td><td>non</td></tr>
+<tr><td>vmbr4</td><td>FLAT (réseau plat du TP1)</td><td>vide</td><td>non</td></tr></table></div>
+<pre class="sh">$ ip -br link show type bridge
+OK: vmbr1 DOWN ea:5f:9d:12:c4:77 &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt;
+## DOWN / NO-CARRIER est normal : aucune machine n'est encore branchée
+$ bridge vlan show dev vmbr2
+OK: vmbr2  1 PVID Egress Untagged</pre>
+<div class="box ok"><b>Résultat attendu</b>Cinq bridges listés ; vmbr2 apparaît avec « vlan-id 1 PVID » (signe qu'il est VLAN aware).</div>
+<div class="box ko"><b>Si cela ne fonctionne pas</b>« Apply Configuration » grisé : F5. vmbr2 absent de <code>bridge vlan show</code> : « VLAN aware » non coché, éditez vmbr2 puis Apply.</div>
+
+<div class="step"><h4><span class="num">0.2</span> Téléverser les ISO</h4></div>
+<p>Datacenter &gt; pve1 &gt; local &gt; ISO Images &gt; Upload (ou Download from URL) : Debian 12 (netinst), pfSense CE (ou OPNsense) et Kali Linux (installateur).</p>
+
+<div class="step"><h4><span class="num">0.3</span> Créer la VM du gabarit Debian (VM 900)</h4></div>
+{{ON:pve|PROXMOX|bouton « Create VM »}}
+<div class="tw"><table><tr><th>Onglet</th><th>Champs</th></tr>
+<tr><td>General</td><td>Node pve1 ; VM ID <b>900</b> ; Name <b>tpl-debian</b></td></tr>
+<tr><td>OS</td><td>ISO debian-12 netinst ; Type Linux</td></tr>
+<tr><td>System</td><td>Valeurs par défaut ; cocher « Qemu Agent »</td></tr>
+<tr><td>Disks</td><td>VirtIO Block ou SCSI ; 8 GiB</td></tr>
+<tr><td>CPU / Memory</td><td>1 socket, 1 cœur ; 1024 MiB</td></tr>
+<tr><td>Network</td><td>Bridge d'installation ; Model VirtIO ; Firewall décoché</td></tr></table></div>
+<p>Finish, Start, ouvrez la Console (noVNC).</p>
+
+<div class="step"><h4><span class="num">0.4</span> Installer Debian dans le gabarit</h4></div>
+<div class="tw"><table><tr><th>Écran</th><th>Choix</th></tr>
+<tr><td>Install</td><td>Install (mode texte)</td></tr>
+<tr><td>Langue, pays, clavier</td><td>French, France, Français (AZERTY)</td></tr>
+<tr><td>Hostname / Domain</td><td>tpl-debian / lab.local</td></tr>
+<tr><td>Réseau</td><td>vmbr0 : automatique. vmbr9 : manuel, IP 10.99.99.50, masque 255.255.255.0, passerelle 10.99.99.1, DNS 1.1.1.1</td></tr>
+<tr><td>Comptes</td><td>root (mot de passe à noter) ; utilisateur <b>etudiant</b></td></tr>
+<tr><td>Partitionnement</td><td>Guided - use entire disk ; All files in one partition</td></tr>
+<tr><td>Logiciels</td><td>Décocher « Debian desktop environment » et « GNOME » ; cocher « SSH server » et « standard system utilities »</td></tr>
+<tr><td>GRUB</td><td>Yes ; choisir le disque</td></tr></table></div>
+
+<div class="step"><h4><span class="num">0.5</span> Installer les outils communs et nettoyer le gabarit</h4></div>
+{{ON:srv|tpl-debian|connecté en « etudiant »}}
+<pre class="sh">$ sudo apt update &amp;&amp; sudo apt full-upgrade -y
+$ sudo apt install -y qemu-guest-agent openssh-server curl nmap netcat-openbsd tcpdump ufw rsyslog dnsutils traceroute nginx
+$ sudo systemctl enable qemu-guest-agent
+$ sudo truncate -s 0 /etc/machine-id
+$ sudo rm -f /etc/ssh/ssh_host_*
+$ sudo poweroff</pre>
+<div class="box key"><b>Pourquoi truncate et rm ?</b>Chaque clone doit avoir son propre identifiant machine et ses propres clés SSH ; sinon deux machines partageraient la même identité (problèmes de DHCP, clés SSH identiques).</div>
+
+<div class="step"><h4><span class="num">0.6</span> Convertir en gabarit puis cloner</h4></div>
+<ol>
+<li>Clic droit sur la VM 900 &gt; <b>Convert to template</b>.</li>
+<li>Clic droit sur le gabarit &gt; <b>Clone</b> : VM ID 120, Name srv-app, <b>Mode Full Clone</b>.</li>
+<li>Recommencez pour SRV-BDD (121), SRV-LOG (122), RP-DMZ (110) et PC-CLIENT (130).</li>
+</ol>
+<p>Au premier démarrage de chaque clone, régénérez les clés SSH et donnez-lui son nom :</p>
+<pre class="sh">$ sudo dpkg-reconfigure openssh-server
+$ sudo hostnamectl set-hostname srv-app
+$ hostnamectl | head -n 3
+OK:  Static hostname: srv-app</pre>
+<div class="box ko"><b>Si cela ne fonctionne pas</b>Même MAC/IP qu'un autre clone : vérifier « Full Clone » et que machine-id a été vidé. Pas d'Internet : vérifier le bridge d'installation, l'adresse (10.99.99.x sur vmbr9), la passerelle et le DNS.</div>
+
+<div class="step"><h4><span class="num">0.7</span> Préparer Kali Linux et le poste client</h4></div>
+<div class="tw"><table><tr><th>VM</th><th>Paramètres</th></tr>
+<tr><td>KALI (VM 901, gabarit)</td><td>ID 901 ; Name tpl-kali ; ISO Kali installer ; 2 cœurs ; 3072 MiB ; 30 GiB ; bridge d'installation, VirtIO. Installation par défaut avec bureau Xfce, utilisateur <b>etudiant</b>, puis conversion en gabarit.</td></tr>
+<tr><td>PC-CLIENT (VM 130)</td><td>Clone de tpl-debian ; 1536 MiB (profil standard). Profil léger : on utilise Kali à la place.</td></tr></table></div>
+<pre class="sh">## PC-CLIENT, profil standard uniquement
+$ sudo apt install -y task-xfce-desktop firefox-esr</pre>
+
+<div class="step"><h4><span class="num">0.8</span> Préparer les serveurs (avec Internet temporaire)</h4></div>
+{{ON:srv|SRV-APP|application web interne sur le port 8080}}
+<pre class="sh">$ sudo mkdir -p /var/www/app
+$ echo '&lt;h1&gt;Application interne - SRV-APP&lt;/h1&gt;' | sudo tee /var/www/app/index.html
+$ printf 'server {\n listen 8080;\n root /var/www/app;\n index index.html;\n}\n' | sudo tee /etc/nginx/conf.d/app.conf
+$ sudo nginx -t &amp;&amp; sudo systemctl reload nginx
+$ curl -I http://localhost:8080
+OK: HTTP/1.1 200 OK</pre>
+{{ON:srv|SRV-BDD|MariaDB, volontairement permissive pour le TP1, durcie au TP7}}
+<pre class="sh">$ sudo apt install -y mariadb-server
+$ sudo sed -i 's/^bind-address.*/bind-address = 0.0.0.0/' /etc/mysql/mariadb.conf.d/50-server.cnf
+$ sudo systemctl restart mariadb
+$ sudo mysql -e "CREATE DATABASE clients; USE clients; CREATE TABLE contacts(id INT, nom VARCHAR(50)); INSERT INTO contacts VALUES (1,'Alice Martin'),(2,'Karim Benali'); CREATE USER 'app'@'%' IDENTIFIED BY 'Lab_Passw0rd'; GRANT ALL ON clients.* TO 'app'@'%'; FLUSH PRIVILEGES;"
+$ sudo mysql -e "SELECT * FROM clients.contacts;"
+OK: 1 | Alice Martin    2 | Karim Benali</pre>
+<div class="box ok"><b>Résultat attendu</b>SRV-APP répond « 200 OK » sur 8080 et SRV-BDD affiche la table contacts. Éteignez chaque machine et <b>supprimez sa carte du bridge d'installation</b> : elle n'aura plus Internet.</div>
+
+{{Q:0.1|Quelle différence y a-t-il entre un bridge « VLAN aware » et un bridge classique ? Que se passe-t-il quand on renseigne un « VLAN Tag » sur la carte réseau d'une VM ?}}
+{{Q:0.2|Pourquoi crée-t-on des gabarits puis des clones plutôt que d'installer chaque machine séparément ? Citez un avantage de sécurité.}}
+{{Q:0.3|Pourquoi installe-t-on tous les paquets avant de rattacher les machines aux bridges isolés ?}}
+{{CHK:tp0|Les bridges vmbr1 à vmbr4 existent, vmbr2 est « VLAN aware » (capture de bridge vlan show);;Les gabarits tpl-debian (900) et tpl-kali (901) sont convertis ; les clones démarrent avec des noms d'hôte distincts;;SRV-APP répond sur le port 8080 ; SRV-BDD contient la base clients;;Les machines sont détachées du bridge d'installation. Snapshot « tp0-ok » pris sur chaque VM}}
+{{DONE:tp0}}
+
+<h2 id="tp1">TP1 — Réseau plat : mesurer le risque</h2>
+<p><b>Durée</b> 1 h 30 · <b>Objectif</b> constater ce qu'un poste compromis peut atteindre dans une architecture plate, sans aucun pare-feu · <b>Prérequis</b> TP0 · <b>À rendre</b> tableau des ressources atteintes, captures, réponses, snapshot « tp1-plat ».</p>
+<div class="step"><h4><span class="num">1.1</span> Brancher les machines sur le réseau plat (vmbr4)</h4></div>
+{{ON:pve|PROXMOX|pour chaque VM : Hardware &gt; Network Device &gt; Edit}}
+<p>Pour SRV-APP, SRV-BDD, PC-CLIENT (ou KALI) : <b>Bridge = vmbr4</b>, VLAN Tag vide, Firewall décoché. OK, puis démarrez les machines.</p>
+<div class="step"><h4><span class="num">1.2</span> Donner une adresse fixe à chaque machine</h4></div>
+{{ON:srv|SRV-APP|console Proxmox de la VM}}
+<pre class="sh">$ ip -br a
+$ sudo ip link set ens18 up
+$ sudo ip addr add 192.168.100.20/24 dev ens18
+$ ip -br a
+OK: ens18 UP 192.168.100.20/24</pre>
+<div class="tw"><table><tr><th>Machine</th><th>Adresse</th><th>Interface (à vérifier)</th></tr>
+<tr><td>SRV-APP</td><td>192.168.100.20/24</td><td>ens18</td></tr><tr><td>SRV-BDD</td><td>192.168.100.30/24</td><td>ens18</td></tr>
+<tr><td>PC-CLIENT</td><td>192.168.100.50/24</td><td>ens18</td></tr><tr><td>KALI</td><td>192.168.100.66/24</td><td>eth0 (ou ens18)</td></tr></table></div>
+{{ON:kali|KALI|vérification}}
+<pre class="sh">$ ping -c 3 192.168.100.20
+OK: 3 packets transmitted, 3 received, 0% packet loss</pre>
+<div class="box ko"><b>Si le ping ne répond pas</b>Vérifiez que les deux machines sont sur vmbr4 sans VLAN Tag, que l'interface est UP et que les adresses sont dans le même /24.</div>
+<div class="step"><h4><span class="num">1.3</span> Jouer le scénario : KALI est un poste compromis</h4></div>
+{{ON:kali|KALI|terminal — rôle : poste d'employé compromis}}
+<p>L'attaquant n'a aucun droit particulier : il est simplement présent sur le réseau.</p>
+<pre class="sh">$ nmap -sn 192.168.100.0/24
+OK: 192.168.100.20, .30, .50 : Host is up
+$ nmap -sV -p- --min-rate 1000 192.168.100.20 192.168.100.30
+OK: .20 → 22/ssh, 80/http, 8080/http   ·   .30 → 22/ssh, 3306/mysql
+$ mysql -h 192.168.100.30 -u app -p -e "SELECT * FROM clients.contacts;"
+OK: 1 | Alice Martin    2 | Karim Benali
+$ nc -zv 192.168.100.30 22
+OK: Connection to 192.168.100.30 22 port [tcp/ssh] succeeded!
+$ curl -s http://192.168.100.20:8080
+OK: &lt;h1&gt;Application interne - SRV-APP&lt;/h1&gt;</pre>
+<p class="small">Client mysql absent sur Kali : installez-le temporairement, ou remplacez par <code>nc -zv 192.168.100.30 3306</code> : « succeeded » prouve déjà que la base est joignable.</p>
+<p>Complétez le tableau des ressources atteintes depuis le poste compromis :</p>
+<div class="tw"><table><tr><th>Machine</th><th>Port</th><th>Service</th><th>Atteignable ? (O/N)</th><th>Sensible ? Pourquoi ?</th></tr>
+<tr><td><input data-save="t1-r1-a" style="width:100%"></td><td><input data-save="t1-r1-b" style="width:100%"></td><td><input data-save="t1-r1-c" style="width:100%"></td><td><input data-save="t1-r1-d" style="width:100%"></td><td><input data-save="t1-r1-e" style="width:100%"></td></tr>
+<tr><td><input data-save="t1-r2-a" style="width:100%"></td><td><input data-save="t1-r2-b" style="width:100%"></td><td><input data-save="t1-r2-c" style="width:100%"></td><td><input data-save="t1-r2-d" style="width:100%"></td><td><input data-save="t1-r2-e" style="width:100%"></td></tr>
+<tr><td><input data-save="t1-r3-a" style="width:100%"></td><td><input data-save="t1-r3-b" style="width:100%"></td><td><input data-save="t1-r3-c" style="width:100%"></td><td><input data-save="t1-r3-d" style="width:100%"></td><td><input data-save="t1-r3-e" style="width:100%"></td></tr>
+<tr><td><input data-save="t1-r4-a" style="width:100%"></td><td><input data-save="t1-r4-b" style="width:100%"></td><td><input data-save="t1-r4-c" style="width:100%"></td><td><input data-save="t1-r4-d" style="width:100%"></td><td><input data-save="t1-r4-e" style="width:100%"></td></tr>
+<tr><td><input data-save="t1-r5-a" style="width:100%"></td><td><input data-save="t1-r5-b" style="width:100%"></td><td><input data-save="t1-r5-c" style="width:100%"></td><td><input data-save="t1-r5-d" style="width:100%"></td><td><input data-save="t1-r5-e" style="width:100%"></td></tr></table></div>
+{{Q:1.1|Combien de services différents un attaquant déjà présent dans le réseau a-t-il pu atteindre ? Lesquels n'ont aucune raison d'être accessibles depuis un poste utilisateur ?}}
+{{Q:1.2|Quels critères DICT sont menacés par l'accès à la base de données ? Justifiez en une phrase pour chacun.}}
+{{Q:1.3|Expliquez avec vos mots la notion de propagation latérale à partir de ce que vous venez d'observer.}}
+{{Q:1.4|Proposez trois mesures du cours qui auraient limité cette exposition.}}
+{{CHK:tp1|Le tableau est rempli, avec une capture du scan nmap de l'étape 1.3;;Vous avez lu le contenu de la table contacts depuis KALI (preuve);;Snapshot « tp1-plat » pris. Les machines sont ensuite retirées de vmbr4}}
+{{DONE:tp1}}
+
+<h2 id="tp2">TP2 — Installer les pare-feu et définir les zones</h2>
+<p><b>Durée</b> 2 h à 2 h 30 · <b>Objectif</b> installer FW-EXT et FW-INT (pfSense), nommer les zones, supprimer les règles permissives et relier les deux pare-feu · <b>Prérequis</b> TP0, ISO pfSense CE (OPNsense : mêmes principes, menus un peu différents) · <b>À rendre</b> tableau des zones, captures, réponses.</p>
+<p>Architecture : Internet – FW-EXT – DMZ – FW-INT – réseau interne. Vous installez d'abord FW-EXT (côté Internet), puis FW-INT.</p>
+
+<div class="step"><h4><span class="num">2.1</span> Créer la VM FW-EXT (VM 100)</h4></div>
+{{ON:pve|PROXMOX|Create VM}}
+<div class="tw"><table><tr><th>Onglet</th><th>Champs</th></tr>
+<tr><td>General</td><td>VM ID 100 ; Name fw-ext</td></tr><tr><td>OS</td><td>ISO pfSense CE ; Type Other</td></tr>
+<tr><td>System / Disks</td><td>Défaut ; disque 16 GiB</td></tr><tr><td>CPU / Memory</td><td>1 core ; 2048 MiB (léger : 1024)</td></tr>
+<tr><td>Network</td><td>net0 : Bridge <b>vmbr3</b> (WAN), VirtIO, Firewall décoché</td></tr></table></div>
+<p>Après Finish : VM 100 &gt; Hardware &gt; Add &gt; Network Device : <b>net1 sur vmbr1</b> (DMZ), VirtIO, Firewall décoché. Dans pfSense, net0 sera <code>vtnet0</code> et net1 <code>vtnet1</code>.</p>
+
+<div class="step"><h4><span class="num">2.2</span> Installer pfSense</h4></div>
+{{ON:fw|FW-EXT|console Proxmox de la VM 100}}
+<p>Accept ; Install pfSense &gt; OK ; keymap par défaut ; partitionnement <b>Auto (UFS)</b> ; Entire Disk &gt; Finish &gt; Commit ; Manual Configuration : No ; Reboot, puis retirez l'ISO (Hardware &gt; CD/DVD Drive &gt; Do not use any media).</p>
+
+<div class="step"><h4><span class="num">2.3</span> Attribuer les interfaces et les adresses (console)</h4></div>
+<p>WAN = vtnet0 (vmbr3), LAN = vtnet1 (vmbr1, renommé DMZ plus tard).</p>
+<pre class="sh">Do you want to set up VLANs now [y|n]? n
+Enter the WAN interface name: vtnet0
+Enter the LAN interface name: vtnet1
+Enter the Optional 1 interface name: (rien)
+Do you want to proceed [y|n]? y</pre>
+<p>Menu principal, option <b>2</b> (Set interface(s) IP address) :</p>
+<pre class="sh">Enter an option: 2
+Enter the number of the interface you wish to configure: 1
+Configure IPv4 address WAN interface via DHCP? n
+Enter the new WAN IPv4 address: 203.0.113.1
+Enter the new WAN IPv4 subnet bit count: 24
+## passerelle : aucune (Entrée) ; IPv6 : non ; HTTP : non
+Enter the number of the interface you wish to configure: 2
+Enter the new LAN IPv4 address: 172.16.50.1
+Enter the new LAN IPv4 subnet bit count: 24
+Do you want to enable the DHCP server on LAN? n
+OK: You can now access the webConfigurator at https://172.16.50.1/</pre>
+<div class="box ko"><b>Les questions peuvent différer</b>Selon la version de pfSense, l'ordre ou le libellé varie. Retenez l'essentiel : WAN en 203.0.113.1/24 sans passerelle, LAN en 172.16.50.1/24, pas de serveur DHCP.</div>
+
+<div class="step"><h4><span class="num">2.4</span> Se connecter à l'interface web de FW-EXT</h4></div>
+{{ON:kali|KALI|poste d'administration placé temporairement sur vmbr1 (DMZ)}}
+<pre class="sh">## Dans Proxmox : carte réseau de KALI sur vmbr1, sans VLAN Tag
+$ sudo ip addr add 172.16.50.99/24 dev eth0
+$ ping -c 2 172.16.50.1
+OK: 64 bytes from 172.16.50.1: icmp_seq=1 ttl=64
+$ curl -k -I https://172.16.50.1 | head -n 1
+OK: HTTP/1.1 200 OK</pre>
+<p>Ouvrez Firefox sur <code>https://172.16.50.1</code>, acceptez le certificat, connectez-vous avec <code>admin</code> / <code>pfsense</code>. Dans l'assistant (Wizard) : hostname <code>fw-ext</code>, domaine <code>lab.local</code>, DNS 1.1.1.1. À « Configure WAN Interface » : type Static, IP 203.0.113.1, masque 24, et <b>décochez « Block RFC1918 Private Networks » et « Block bogon networks »</b> (les adresses de laboratoire seraient rejetées). LAN inchangé ; choisissez un <b>nouveau mot de passe fort</b> ; Reload, Finish.</p>
+
+<div class="step"><h4><span class="num">2.5</span> Nommer la zone DMZ et supprimer les règles permissives</h4></div>
+{{ON:fw|FW-EXT|https://172.16.50.1}}
+<ol>
+<li>Interfaces &gt; LAN : Description <b>DMZ</b> ; Save, Apply Changes.</li>
+<li>Firewall &gt; Rules &gt; DMZ : supprimez les deux règles « Default allow LAN to any rule » (IPv4 et IPv6). <b>Conservez l'anti-lockout.</b></li>
+</ol>
+<div class="box ok"><b>Résultat attendu</b>L'onglet DMZ ne contient plus que « Anti-Lockout Rule » ; l'onglet WAN n'a aucune règle : tout trafic entrant est bloqué par défaut.</div>
+<div class="box ko"><b>Si vous perdez l'accès à l'interface web</b>Console pfSense, option 8 (Shell) : <code>pfctl -d</code> désactive temporairement le filtrage ; corrigez, puis <code>pfctl -e</code>.</div>
+
+<div class="step"><h4><span class="num">2.6</span> Créer la VM FW-INT (VM 101) et l'installer</h4></div>
+{{ON:pve|PROXMOX|Create VM}}
+<div class="tw"><table><tr><th>Élément</th><th>Valeur</th></tr>
+<tr><td>General</td><td>VM ID 101 ; Name fw-int ; ISO pfSense ; Type Other ; disque 16 GiB ; 1 core ; 2048 MiB (léger : 1024)</td></tr>
+<tr><td>net0</td><td>Bridge <b>vmbr1</b> (côté DMZ), VirtIO, Firewall décoché</td></tr>
+<tr><td>net1</td><td>Bridge <b>vmbr2</b>, <b>VLAN Tag vide</b> (la carte reçoit tous les VLAN : c'est un trunk), VirtIO, Firewall décoché</td></tr></table></div>
+{{ON:fw|FW-INT|console, installation comme à l'étape 2.2}}
+<p>Répondez <b>oui</b> aux VLAN : vtnet1 sera le trunk et le VLAN 30 (Management) servira d'interface « LAN ».</p>
+<pre class="sh">Do you want to set up VLANs now [y|n]? y
+Enter the parent interface name for the new VLAN: vtnet1
+Enter the VLAN tag (1-4094): 30
+WAN interface: vtnet0
+LAN interface: vtnet1.30
+## Option 2 :
+WAN : 172.16.50.2 /24, passerelle amont 172.16.50.1
+LAN : 192.168.30.1 /24, pas de DHCP
+OK: https://192.168.30.1/</pre>
+
+<div class="step"><h4><span class="num">2.7</span> Se connecter à FW-INT depuis le VLAN 30 et le configurer</h4></div>
+{{ON:kali|KALI|carte sur vmbr2 avec VLAN Tag 30}}
+<pre class="sh">$ sudo ip addr flush dev eth0
+$ sudo ip addr add 192.168.30.10/24 dev eth0
+$ sudo ip route add default via 192.168.30.1
+$ ping -c 2 192.168.30.1
+OK: 64 bytes from 192.168.30.1: icmp_seq=1 ttl=64</pre>
+<p>Ouvrez <code>https://192.168.30.1</code> (admin / pfsense), suivez l'assistant : hostname <code>fw-int</code>, domaine <code>lab.local</code>, nouveau mot de passe. À « Configure WAN Interface » : IP statique 172.16.50.2/24, passerelle 172.16.50.1, <b>décochez les deux blocages</b>. Puis :</p>
+<ol type="a">
+<li><b>Renommer les interfaces</b> : WAN → <code>DMZ_LINK</code>, LAN → <code>MGMT</code>.</li>
+<li><b>Désactiver le NAT sortant</b> (Firewall &gt; NAT &gt; Outbound : « Disable Outbound NAT rule generation ») : entre la DMZ et le réseau interne on route, on ne fait pas de NAT.</li>
+<li><b>Désactiver reply-to</b> (System &gt; Advanced &gt; Firewall &amp; NAT : « Disable reply-to on WAN rules ») : sinon les réponses au trafic entrant par DMZ_LINK repartiraient via FW-EXT et seraient bloquées.</li>
+<li><b>Supprimer la règle permissive</b> : Firewall &gt; Rules &gt; MGMT, supprimez « Default allow LAN to any rule » (IPv4 et IPv6), conservez l'anti-lockout. Apply Changes après chaque modification.</li>
+</ol>
+
+<div class="step"><h4><span class="num">2.8</span> Relier les deux pare-feu : routes</h4></div>
+{{ON:fw|FW-EXT|https://172.16.50.1 (depuis le poste en DMZ)}}
+<p>FW-INT connaît FW-EXT comme passerelle par défaut. FW-EXT doit apprendre où se trouve le réseau interne.</p>
+<ol>
+<li>System &gt; Routing &gt; Gateways &gt; Add : Interface DMZ, IPv4, Name <code>GW_INT</code>, Gateway <code>172.16.50.2</code>, cocher <i>Disable Gateway Monitoring</i>.</li>
+<li>System &gt; Routing &gt; Static Routes &gt; Add : destination <code>192.168.0.0/16</code>, gateway <code>GW_INT</code>. Apply Changes.</li>
+</ol>
+<div class="step"><h4><span class="num">2.9</span> Tester la liaison entre les pare-feu</h4></div>
+<pre class="sh">## FW-EXT, console, option 7 (Ping host)
+Enter a host name or IP address: 172.16.50.2
+OK: 3 packets transmitted, 3 packets received, 0.0% packet loss</pre>
+<p>Faites de même depuis FW-INT vers 172.16.50.1, puis depuis KALI (VLAN 30) vers 192.168.30.1. Classez enfin les zones :</p>
+<div class="tw"><table><tr><th>Zone</th><th>Pare-feu / interface</th><th>Bridge ou VLAN</th><th>Niveau de confiance</th></tr>
+<tr><td>Internet</td><td>FW-EXT / WAN</td><td>vmbr3</td><td><input data-save="t2-z1" style="width:100%"></td></tr>
+<tr><td>DMZ</td><td><input data-save="t2-z2a" style="width:100%"></td><td><input data-save="t2-z2b" style="width:100%"></td><td><input data-save="t2-z2c" style="width:100%"></td></tr>
+<tr><td>Management</td><td><input data-save="t2-z3a" style="width:100%"></td><td><input data-save="t2-z3b" style="width:100%"></td><td><input data-save="t2-z3c" style="width:100%"></td></tr>
+<tr><td>Utilisateurs (TP3)</td><td><input data-save="t2-z4a" style="width:100%"></td><td><input data-save="t2-z4b" style="width:100%"></td><td><input data-save="t2-z4c" style="width:100%"></td></tr>
+<tr><td>Serveurs (TP3)</td><td><input data-save="t2-z5a" style="width:100%"></td><td><input data-save="t2-z5b" style="width:100%"></td><td><input data-save="t2-z5c" style="width:100%"></td></tr>
+<tr><td>Invités (TP3)</td><td><input data-save="t2-z6a" style="width:100%"></td><td><input data-save="t2-z6b" style="width:100%"></td><td><input data-save="t2-z6c" style="width:100%"></td></tr></table></div>
+<div class="box ko"><b>Si cela ne fonctionne pas</b>Ping FW-INT → FW-EXT échoue : net0 de FW-INT sur vmbr1 ? adresses .1 et .2 en /24 ? « Block private networks » décoché sur DMZ_LINK ? Pas d'accès à https://192.168.30.1 : VLAN Tag 30 sur la carte de KALI, adresse 192.168.30.10/24, net1 de FW-INT sur vmbr2 sans tag.</div>
+{{Q:2.1|Pourquoi supprime-t-on la règle « allow LAN to any » installée par défaut ? Quel principe du cours cela illustre-t-il ?}}
+{{Q:2.2|Pourquoi désactive-t-on le NAT sortant sur FW-INT ? Où le NAT est-il réalisé pour sortir vers « Internet » ?}}
+{{Q:2.3|Quelle est l'utilité de la règle anti-verrouillage (anti-lockout) ? Quel risque y a-t-il à la retirer ?}}
+{{CHK:tp2|Les deux pare-feu sont accessibles par leur interface web, mots de passe changés;;Les ping entre FW-EXT, FW-INT et KALI (VLAN 30) fonctionnent;;Aucune règle « allow any » ne subsiste ; route statique 192.168.0.0/16 en place ; reply-to désactivé sur FW-INT;;Tableau des zones complété ; snapshots « tp2-ok » pris sur FW-EXT et FW-INT}}
+{{DONE:tp2}}
+
+<h2 id="tp3">TP3 — VLAN et réseau interne</h2>
+<p><b>Durée</b> 2 h · <b>Objectif</b> segmenter le réseau interne en quatre VLAN routés par FW-INT, avec DHCP, et constater l'effet de « tout est bloqué par défaut » · <b>Prérequis</b> TP2 · <b>À rendre</b> plan de VLAN, captures des interfaces et des journaux de blocage, réponses.</p>
+<div class="step"><h4><span class="num">3.1</span> Créer les VLAN 10, 20 et 40 dans FW-INT</h4></div>
+{{ON:fw|FW-INT|https://192.168.30.1 depuis KALI en VLAN 30}}
+<p>Interfaces &gt; Assignments &gt; VLANs &gt; Add : Parent <code>vtnet1</code>, tag 10, description USERS. Recommencez avec le tag 20 (SERVERS) et le tag 40 (GUESTS). Le VLAN 30 existe déjà. <b>Attendu</b> : quatre lignes <code>vtnet1.10/.20/.30/.40</code>.</p>
+<div class="step"><h4><span class="num">3.2</span> Assigner et configurer les interfaces VLAN</h4></div>
+<p>Interfaces &gt; Assignments : ajoutez les VLAN 10, 20 et 40 (ils deviennent OPT1, OPT2, OPT3). Pour chacune : Enable, Description, IPv4 Static, adresse. Save, Apply Changes.</p>
+<div class="tw"><table><tr><th>Interface</th><th>VLAN</th><th>Description</th><th>Adresse IPv4</th></tr>
+<tr><td>OPT1</td><td>10</td><td>USERS</td><td>192.168.10.1/24</td></tr><tr><td>OPT2</td><td>20</td><td>SERVERS</td><td>192.168.20.1/24</td></tr>
+<tr><td>LAN (existant)</td><td>30</td><td>MGMT</td><td>192.168.30.1/24</td></tr><tr><td>OPT3</td><td>40</td><td>GUESTS</td><td>192.168.40.1/24</td></tr></table></div>
+<div class="step"><h4><span class="num">3.3</span> Activer le DHCP sur USERS et GUESTS</h4></div>
+<p>Services &gt; DHCP Server &gt; USERS : Enable, plage <code>192.168.10.100</code> à <code>192.168.10.150</code>. Idem sur GUESTS (<code>192.168.40.100</code> à <code>.150</code>). Pas de DHCP sur SERVERS ni MGMT : les serveurs ont des adresses fixes.</p>
+<div class="step"><h4><span class="num">3.4</span> Rattacher les machines aux VLAN (dans Proxmox)</h4></div>
+{{ON:pve|PROXMOX|VM &gt; Hardware &gt; Network Device &gt; Edit}}
+<div class="tw"><table><tr><th>Machine</th><th>Bridge</th><th>VLAN Tag</th><th>Adressage</th></tr>
+<tr><td>SRV-APP</td><td>vmbr2</td><td>20</td><td>192.168.20.20/24 fixe</td></tr><tr><td>SRV-BDD</td><td>vmbr2</td><td>20</td><td>192.168.20.30/24 fixe</td></tr>
+<tr><td>SRV-LOG</td><td>vmbr2</td><td>30</td><td>192.168.30.20/24 fixe</td></tr><tr><td>KALI / PC-CLIENT</td><td>vmbr2</td><td>10, 30 ou 40</td><td>DHCP</td></tr></table></div>
+{{ON:srv|SRV-APP|adresse fixe permanente}}
+<pre class="sh">$ sudo nano /etc/network/interfaces
+## remplacez le bloc de ens18 par :
+auto ens18
+iface ens18 inet static
+    address 192.168.20.20/24
+    gateway 192.168.20.1
+$ sudo systemctl restart networking
+$ ip route
+OK: default via 192.168.20.1 dev ens18 onlink</pre>
+<p>Faites de même pour SRV-BDD (192.168.20.30, passerelle 192.168.20.1) et SRV-LOG (192.168.30.20, passerelle 192.168.30.1).</p>
+<div class="step"><h4><span class="num">3.5</span> Créer les alias de FW-INT</h4></div>
+<p>Firewall &gt; Aliases &gt; Add, puis Apply Changes. Les alias rendent les règles lisibles et évitent les erreurs ; vous les réutiliserez aux TP4 et TP5.</p>
+<div class="tw"><table><tr><th>Nom</th><th>Type</th><th>Contenu</th></tr>
+<tr><td>RFC1918</td><td>Network(s)</td><td>10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16</td></tr><tr><td>RP_DMZ</td><td>Host(s)</td><td>172.16.50.10</td></tr>
+<tr><td>SRV_APP</td><td>Host(s)</td><td>192.168.20.20</td></tr><tr><td>SRV_BDD</td><td>Host(s)</td><td>192.168.20.30</td></tr>
+<tr><td>SRV_LOG</td><td>Host(s)</td><td>192.168.30.20</td></tr><tr><td>ADMIN_PC</td><td>Host(s)</td><td>192.168.30.10</td></tr>
+<tr><td>ADMIN_PORTS</td><td>Port(s)</td><td>22, 443</td></tr></table></div>
+<div class="step"><h4><span class="num">3.6</span> Observer le comportement par défaut (deny all)</h4></div>
+{{ON:kali|KALI|carte sur vmbr2, VLAN Tag 10 (poste utilisateur)}}
+<pre class="sh">$ sudo dhclient -r eth0 ; sudo dhclient -v eth0
+OK: DHCPACK of 192.168.10.100 from 192.168.10.1
+$ ping -c 3 192.168.10.1
+KO: 3 packets transmitted, 0 received, 100% packet loss
+$ curl -m 5 http://192.168.20.20:8080
+KO: curl: (28) Connection timed out after 5001 milliseconds</pre>
+<p>Le poste a bien une adresse (DHCP) mais ne peut rien joindre : aucune règle n'autorise ces flux. Observez le blocage : {{ON:fw|FW-INT|Status &gt; System Logs &gt; Firewall}} Chaque ligne « Block » est un paquet bloqué par la règle implicite « Default deny rule ».</p>
+{{Q:3.1|Le ping vers la passerelle et le curl échouent alors que le poste a bien reçu une adresse. Pourquoi ? Pourquoi le DHCP fonctionne-t-il malgré tout ?}}
+{{Q:3.2|Recopiez une ligne de blocage du journal et indiquez : interface, adresse source, adresse destination, port, action.}}
+{{Q:3.3|Deux VM situées dans deux VLAN différents peuvent-elles se joindre sans passer par FW-INT ? Quelle est la conséquence pour la sécurité ?}}
+{{Q:3.4|Un VLAN est-il à lui seul une protection ? Appuyez-vous sur ce que vous venez de constater.}}
+{{CHK:tp3|Quatre interfaces VLAN (10, 20, 30, 40) actives sur FW-INT avec la bonne adresse;;KALI obtient une adresse DHCP dans le VLAN 10, puis dans le VLAN 40 après changement de tag;;Les serveurs ont leur adresse fixe permanente ; les alias sont créés;;Le journal montre vos essais bloqués. Snapshots « tp3-ok » pris}}
+{{DONE:tp3}}
+
+<h2 id="tp4">TP4 — DMZ, reverse-proxy et NAT</h2>
+<p><b>Durée</b> 2 h · <b>Objectif</b> publier l'application interne sur « Internet » à travers un reverse-proxy en DMZ, sans jamais exposer le réseau interne · <b>Prérequis</b> TP3 · <b>À rendre</b> captures des règles NAT, des règles de FW-INT, des tests depuis KALI, réponses.</p>
+<p>Chemin d'une requête : Internet (KALI) → FW-EXT (NAT) → RP-DMZ (Nginx) → FW-INT (règle DMZ_LINK) → SRV-APP.</p>
+<div class="step"><h4><span class="num">4.1</span> Placer RP-DMZ en DMZ et lui donner son réseau</h4></div>
+<p>Proxmox : VM RP-DMZ (110), carte sur <b>vmbr1</b>, VLAN Tag vide.</p>
+{{ON:dmz|RP-DMZ|console Proxmox}}
+<pre class="sh">$ sudo nano /etc/network/interfaces
+auto ens18
+iface ens18 inet static
+    address 172.16.50.10/24
+    gateway 172.16.50.1
+    up ip route add 192.168.0.0/16 via 172.16.50.2
+$ sudo systemctl restart networking
+$ ip route get 192.168.20.20
+OK: 192.168.20.20 via 172.16.50.2 dev ens18 src 172.16.50.10</pre>
+<div class="box ko"><b>Piège classique : le routage asymétrique</b>Sans la ligne <code>up ip route add 192.168.0.0/16 via 172.16.50.2</code>, <code>ip route get</code> afficherait « via 172.16.50.1 » (FW-EXT). Les paquets sortiraient par FW-EXT et reviendraient par FW-INT : le pare-feu à états rejette ces réponses « inattendues ».</div>
+<div class="step"><h4><span class="num">4.2</span> Certificat TLS et configuration du reverse-proxy</h4></div>
+<pre class="sh">$ sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/lab.key -out /etc/ssl/certs/lab.crt -subj '/CN=lab.local'
+$ sudo rm -f /etc/nginx/sites-enabled/default
+$ sudo nano /etc/nginx/conf.d/proxy.conf</pre>
+<p>Contenu de <code>/etc/nginx/conf.d/proxy.conf</code> (à recopier tel quel) :</p>
+<pre class="sh">server {
+    listen 80;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    ssl_certificate     /etc/ssl/certs/lab.crt;
+    ssl_certificate_key /etc/ssl/private/lab.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    location / {
+        proxy_pass http://192.168.20.20:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}</pre>
+<pre class="sh">$ sudo nginx -t &amp;&amp; sudo systemctl reload nginx
+OK: nginx: configuration file /etc/nginx/nginx.conf test is successful
+$ ss -tlnp | grep nginx
+OK: LISTEN 0.0.0.0:80 · 0.0.0.0:443</pre>
+<div class="box ko"><b>Si cela ne fonctionne pas</b><code>nginx -t</code> signale une erreur : point-virgule manquant ou accolade non fermée (la ligne fautive est indiquée). « cannot load certificate » : vérifiez les chemins <code>/etc/ssl/certs/lab.crt</code> et <code>/etc/ssl/private/lab.key</code>.</div>
+<div class="step"><h4><span class="num">4.3</span> Publier le service sur FW-EXT (redirection de ports NAT)</h4></div>
+{{ON:fw|FW-EXT|Firewall &gt; NAT &gt; Port Forward &gt; Add}}
+<p>Interface <b>WAN</b> ; protocole TCP ; destination <i>WAN address</i> ; port <b>HTTPS (443)</b> ; Redirect target IP <b>172.16.50.10</b> ; port HTTPS (443) ; <i>Filter rule association : Add associated filter rule</i>. Save, Apply. Recommencez avec le port HTTP (80). Vérifiez Firewall &gt; Rules &gt; WAN : seules ces deux règles (TCP 443 et 80 vers 172.16.50.10) autorisent du trafic entrant.</p>
+<div class="step"><h4><span class="num">4.4</span> Autoriser le strict nécessaire vers l'interne (FW-INT)</h4></div>
+{{ON:fw|FW-INT|Firewall &gt; Rules &gt; DMZ_LINK &gt; Add}}
+<p>Action Pass ; TCP ; Source alias <code>RP_DMZ</code> ; Destination alias <code>SRV_APP</code> ; port <b>8080</b> ; <i>Log</i> coché ; description « RP-DMZ vers SRV-APP 8080 ». Ajoutez ensuite en dernier une règle <b>Block, any, any, Log coché</b>, puis Apply Changes.</p>
+<div class="tw"><table><tr><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th><th>Port</th><th>Log</th></tr>
+<tr><td>Pass</td><td>TCP</td><td>RP_DMZ</td><td>SRV_APP</td><td>8080</td><td>oui</td></tr><tr><td>Block</td><td>any</td><td>any</td><td>any</td><td>any</td><td>oui</td></tr></table></div>
+<div class="step"><h4><span class="num">4.5</span> Tester depuis « Internet »</h4></div>
+{{ON:kali|KALI|carte sur vmbr3 (WAN-LAB), sans VLAN Tag}}
+<pre class="sh">$ sudo ip addr flush dev eth0
+$ sudo ip addr add 203.0.113.101/24 dev eth0
+$ sudo ip route add default via 203.0.113.1
+$ curl -k -I https://203.0.113.1
+OK: HTTP/1.1 200 OK
+$ curl -k https://203.0.113.1
+OK: &lt;h1&gt;Application interne - SRV-APP&lt;/h1&gt;
+$ curl -I http://203.0.113.1
+OK: HTTP/1.1 301 Moved Permanently   Location: https://203.0.113.1/
+$ curl -m 5 http://192.168.20.20:8080
+KO: curl: (28) Connection timed out after 5001 milliseconds</pre>
+<p>Les trois premières commandes réussissent (l'application est publiée), la quatrième échoue : le réseau interne n'est pas joignable depuis Internet. Côté serveur : <code>sudo tail -n 2 /var/log/nginx/access.log</code> sur SRV-APP montre que les requêtes arrivent de <code>172.16.50.10</code>.</p>
+<div class="box ko"><b>Si cela ne fonctionne pas</b>Timeout vers 203.0.113.1 : journaux de FW-EXT (une ligne « Block » sur WAN = règle NAT/WAN manquante) ; KALI sur vmbr3 avec route par défaut 203.0.113.1. « 502 Bad Gateway » : Nginx n'atteint pas SRV-APP (règle DMZ_LINK, route 192.168.0.0/16 de RP-DMZ, SRV-APP écoute sur 8080). Le blocage ne s'affiche pas : « Log packets » coché sur la règle de blocage ?</div>
+{{Q:4.1|Les trois premières commandes fonctionnent, la quatrième échoue. Expliquez pourquoi, en citant le rôle de la DMZ et du double pare-feu.}}
+{{Q:4.2|Dans les journaux de SRV-APP, quelle est l'adresse source des requêtes ? Pourquoi n'est-ce pas celle de KALI, et quel en-tête permet de la retrouver ?}}
+{{Q:4.3|Supposons que RP-DMZ soit compromis. Que peut atteindre l'attaquant dans le réseau interne avec les règles actuelles ? Que faudrait-il pour réduire encore ce risque ?}}
+{{Q:4.4|Pourquoi redirige-t-on le port 80 vers le 443 plutôt que de supprimer le port 80 ?}}
+{{CHK:tp4|Le site est accessible en HTTPS depuis KALI à 203.0.113.1 ; la requête directe vers 192.168.20.20 échoue;;Seules deux règles existent sur le WAN de FW-EXT (80 et 443 vers RP-DMZ);;Sur FW-INT, DMZ_LINK n'autorise que RP_DMZ vers SRV_APP:8080 ; le reste est bloqué et journalisé;;Snapshots « tp4-ok » pris}}
+{{DONE:tp4}}
+
+<h2 id="tp5">TP5 — Matrice de flux et règles de filtrage</h2>
+<p><b>Durée</b> 2 h · <b>Objectif</b> décider d'abord, configurer ensuite : traduire une matrice de flux en règles de pare-feu précises (moindre privilège) · <b>Prérequis</b> TP4 · <b>À rendre</b> matrice complétée, règles de FW-INT et FW-EXT en captures, tests de l'étape 5.6.</p>
+<div class="step"><h4><span class="num">5.1</span> Compléter la matrice de flux (avant de configurer quoi que ce soit)</h4></div>
+<p>Pour chaque flux, décidez <b>A</b> (autorisé) ou <b>R</b> (refusé) et justifiez en une phrase. <b>Ne configurez rien avant d'avoir rempli la matrice.</b></p>
+<div class="tw"><table><tr><th>N°</th><th>Source</th><th>Destination</th><th>Service / port</th><th>A / R</th><th>Justification</th></tr>
+<tr><td>1</td><td>Internet</td><td>RP-DMZ</td><td>TCP 80, 443</td><td><select data-save="t5-m1-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m1-j" style="width:100%"></td></tr><tr><td>2</td><td>Internet</td><td>Réseau interne</td><td>tous</td><td><select data-save="t5-m2-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m2-j" style="width:100%"></td></tr><tr><td>3</td><td>RP-DMZ</td><td>SRV-APP</td><td>TCP 8080</td><td><select data-save="t5-m3-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m3-j" style="width:100%"></td></tr><tr><td>4</td><td>RP-DMZ</td><td>SRV-BDD</td><td>TCP 3306</td><td><select data-save="t5-m4-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m4-j" style="width:100%"></td></tr><tr><td>5</td><td>DMZ</td><td>VLAN Utilisateurs</td><td>tous</td><td><select data-save="t5-m5-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m5-j" style="width:100%"></td></tr><tr><td>6</td><td>VLAN Utilisateurs</td><td>SRV-APP</td><td>TCP 8080</td><td><select data-save="t5-m6-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m6-j" style="width:100%"></td></tr><tr><td>7</td><td>VLAN Utilisateurs</td><td>SRV-BDD</td><td>TCP 3306</td><td><select data-save="t5-m7-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m7-j" style="width:100%"></td></tr><tr><td>8</td><td>VLAN Utilisateurs</td><td>Internet</td><td>TCP 80, 443</td><td><select data-save="t5-m8-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m8-j" style="width:100%"></td></tr><tr><td>9</td><td>VLAN Utilisateurs</td><td>VLAN Management</td><td>tous</td><td><select data-save="t5-m9-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m9-j" style="width:100%"></td></tr><tr><td>10</td><td>ADMIN_PC (Mgmt)</td><td>Serveurs et DMZ</td><td>TCP 22, 443</td><td><select data-save="t5-m10-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m10-j" style="width:100%"></td></tr><tr><td>11</td><td>VLAN Guests</td><td>Internet</td><td>TCP 80, 443</td><td><select data-save="t5-m11-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m11-j" style="width:100%"></td></tr><tr><td>12</td><td>VLAN Guests</td><td>Réseaux internes</td><td>tous</td><td><select data-save="t5-m12-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m12-j" style="width:100%"></td></tr><tr><td>13</td><td>VLAN Serveurs</td><td>Internet</td><td>tous</td><td><select data-save="t5-m13-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m13-j" style="width:100%"></td></tr><tr><td>14</td><td>VLAN Serveurs</td><td>SRV_LOG</td><td>UDP/TCP 514 (optionnel)</td><td><select data-save="t5-m14-d"><option value="">—</option><option>A</option><option>R</option></select></td><td><input data-save="t5-m14-j" style="width:100%"></td></tr>
+</table></div>
+<div class="box key"><b>Rappel : comment lit un pare-feu pfSense</b>Une règle s'applique au trafic <i>entrant</i> dans l'interface où elle est définie. La première règle qui correspond l'emporte. Ce qui n'est autorisé par aucune règle est bloqué. Les réponses aux connexions autorisées passent automatiquement (pare-feu à états).</div>
+<div class="step"><h4><span class="num">5.2</span> Écrire les règles de l'interface USERS (exemple guidé)</h4></div>
+{{ON:fw|FW-INT|Firewall &gt; Rules &gt; USERS &gt; Add}}
+<ol>
+<li><b>Règle 1</b> : Pass, TCP, source <i>USERS subnets</i>, destination alias <code>SRV_APP</code>, port <code>8080</code>, description « USERS vers application ».</li>
+<li><b>Règle 2</b> : navigation vers « Internet » = tout sauf les réseaux privés. Pass, TCP, source USERS subnets, destination alias <code>RFC1918</code> avec <b>Invert match</b>, ports HTTP (80) à HTTPS (443).</li>
+<li><b>Règle 3</b> : Block, any, any, any, <b>Log</b> coché. Apply Changes.</li>
+</ol>
+<div class="step"><h4><span class="num">5.3</span> Écrire les règles des autres interfaces</h4></div>
+<p>À partir de votre matrice, complétez le jeu de règles de chaque interface (alias du TP3 ; « !RFC1918 » signifie « tout sauf les réseaux privés », soit « Internet »). Indices :</p>
+<ul>
+<li><b>GUESTS</b> : une règle de passage vers Internet seulement, puis un blocage journalisé ;</li>
+<li><b>MGMT</b> : l'administration vient d'une seule source (alias ADMIN_PC) vers les réseaux privés sur les ports de l'alias ADMIN_PORTS ; ajoutez un ICMP depuis ADMIN_PC pour le diagnostic ;</li>
+<li><b>SERVERS</b> : rien n'est autorisé vers Internet ; seule la règle de journalisation (TP7) viendra plus tard ;</li>
+<li><b>DMZ_LINK</b> : déjà fait au TP4.</li>
+</ul>
+<div class="q"><b class="k">À compléter</b> — vos règles par interface (ordre, action, protocole, source, destination, port) :<textarea data-save="t5-regles" style="min-height:150px" placeholder="USERS : 1. Pass TCP USERS net → SRV_APP:8080 …"></textarea></div>
+<div class="step"><h4><span class="num">5.4</span> Créer le « faux Internet » pour tester la sortie</h4></div>
+{{ON:kali|KALI|profil standard : KALI-EXT (203.0.113.100)}}
+<pre class="sh">$ mkdir -p /tmp/fakeweb &amp;&amp; echo 'Faux Internet' &gt; /tmp/fakeweb/index.html
+$ cd /tmp/fakeweb &amp;&amp; sudo python3 -m http.server 80
+OK: Serving HTTP on 0.0.0.0 port 80</pre>
+<p><b>Profil léger</b> : conteneur WEB-EXT (CT 150) à la place. Create CT : hostname web-ext, 1 core, 128 MiB, disque 2 GiB, modèle Debian, d'abord sur vmbr9 (10.99.99.60/24, passerelle 10.99.99.1) pour <code>apt update &amp;&amp; apt install -y python3</code>, puis carte sur <b>vmbr3</b> avec <code>203.0.113.100/24</code>, passerelle 203.0.113.1.</p>
+<pre class="sh">$ mkdir -p /srv/fakeweb &amp;&amp; echo 'Faux Internet' &gt; /srv/fakeweb/index.html
+$ python3 -m http.server 80 --directory /srv/fakeweb &amp;</pre>
+<div class="step"><h4><span class="num">5.5</span> Autoriser la sortie sur FW-EXT (règle + NAT sortant)</h4></div>
+{{ON:fw|FW-EXT|https://172.16.50.1}}
+<ol>
+<li>Firewall &gt; Aliases : créez <code>CLIENT_NETS</code> (Network(s)) = <code>192.168.10.0/24</code> et <code>192.168.40.0/24</code>.</li>
+<li>Firewall &gt; Rules &gt; <b>DMZ</b> &gt; Add : Pass, TCP, source <code>CLIENT_NETS</code>, destination any, ports HTTP (80) à HTTPS (443).</li>
+<li>Firewall &gt; NAT &gt; Outbound : mode <b>Hybrid</b>, Save, puis Add : interface WAN, source <code>192.168.0.0/16</code>, destination any, translation <i>Interface Address</i>.</li>
+</ol>
+<div class="step"><h4><span class="num">5.6</span> Premiers tests de la matrice</h4></div>
+{{ON:kali|KALI|carte sur vmbr2, VLAN Tag 10}}
+<pre class="sh">$ curl -I http://192.168.20.20:8080
+OK: HTTP/1.1 200 OK
+$ curl -I http://203.0.113.100
+OK: HTTP/1.0 200 OK
+$ curl -m 5 http://192.168.30.1
+KO: curl: (28) Connection timed out after 5001 milliseconds
+$ nc -zv -w 3 192.168.20.30 3306
+KO: nc: connect to 192.168.20.30 port 3306 (tcp) timed out</pre>
+<div class="box ok"><b>Résultat attendu</b>Les deux premiers flux passent (application et faux Internet) ; le troisième (administration du pare-feu) et le quatrième (base de données) sont bloqués.</div>
+<div class="box ko"><b>Si la sortie vers 203.0.113.100 échoue</b>Vérifiez dans l'ordre : règle USERS (80/443 vers !RFC1918), règle DMZ de FW-EXT (alias CLIENT_NETS), NAT sortant hybride 192.168.0.0/16, route statique de FW-EXT, WEB-EXT démarré. Si cela marche aussi vers 192.168.20.30 : règle trop large, vérifiez « Invert match ».</div>
+{{Q:5.1|Dans la matrice, pourquoi le flux n°4 (RP-DMZ vers la base de données) est-il refusé alors que RP-DMZ est de confiance ? Quelle architecture applicative évite d'avoir à l'autoriser ?}}
+{{Q:5.2|Pourquoi n'autorise-t-on pas « USERS vers tous les ports du VLAN SERVERS » ? Donnez un exemple d'attaque que cela faciliterait.}}
+{{Q:5.3|Expliquez la différence entre Block (abandon silencieux) et Reject (réponse de refus) pour un scanneur de ports. Lequel est préférable côté Internet ?}}
+{{Q:5.4|Pourquoi l'ordre des règles est-il important ? Donnez un exemple où inverser deux règles change le résultat.}}
+{{CHK:tp5|La matrice de flux est complétée et justifiée (14 lignes);;Toutes les règles de FW-INT correspondent à la matrice ; les blocages sont journalisés;;Les tests de l'étape 5.6 donnent le résultat attendu;;Snapshots « tp5-ok » pris sur FW-EXT et FW-INT}}
+{{DONE:tp5}}
+
+<h2 id="tp6">TP6 — Audit avec Kali et fiche de recette</h2>
+<p><b>Durée</b> 2 h · <b>Objectif</b> prouver que l'architecture se comporte comme la matrice de flux, en attaquant votre propre laboratoire, puis rédiger un mini-rapport d'audit · <b>Prérequis</b> TP5 · <b>À rendre</b> fiche de recette complétée, extraits de journaux, rapport (trois constats).</p>
+<div class="box rule"><b>Cadre légal</b>Vous n'attaquez que les adresses 203.0.113.0/24, 172.16.50.0/24 et 192.168.x.0/24 de votre laboratoire. Relisez l'adresse de chaque commande avant de valider.</div>
+<h3>6.1 Lire un résultat nmap</h3>
+<div class="tw"><table><tr><th>État</th><th>Signification</th><th>Ce que cela indique</th></tr>
+<tr><td>open</td><td>Le port répond : un service écoute</td><td>Flux autorisé et service actif</td></tr>
+<tr><td>closed</td><td>La machine répond, mais aucun service n'écoute</td><td>Le pare-feu laisse passer, le service est arrêté</td></tr>
+<tr><td>filtered</td><td>Aucune réponse : paquets abandonnés</td><td>Un pare-feu bloque (cas attendu pour un flux interdit)</td></tr></table></div>
+<p>Ajoutez <code>-Pn</code> quand le pare-feu bloque le ping : sans cette option nmap conclut à tort que l'hôte est éteint.</p>
+<div class="step"><h4><span class="num">6.2</span> Test guidé T1 : scan depuis « Internet »</h4></div>
+{{ON:kali|KALI|carte sur vmbr3 (rôle KALI-EXT)}}
+<p>Avant de lancer, écrivez dans la fiche de recette ce que vous attendez (6.7). Puis :</p>
+<pre class="sh">$ nmap -Pn -p- --min-rate 1000 203.0.113.1
+OK: Not shown: 65533 filtered tcp ports (no-response)
+OK: 80/tcp open http    443/tcp open https</pre>
+<p>Sur 65 535 ports, seuls 80 et 443 répondent : c'est exactement la surface d'attaque voulue (les deux redirections NAT vers le reverse-proxy).</p>
+<div class="step"><h4><span class="num">6.3</span> Test guidé T5 : scan depuis un poste du VLAN 10</h4></div>
+<pre class="sh">$ nmap -Pn -p 22,80,8080,3306 192.168.20.20 192.168.20.30
+OK: 192.168.20.20 → 8080 open ; 22, 80, 3306 filtered
+OK: 192.168.20.30 → tout filtered</pre>
+<p>Comparez avec le TP1 : ici l'attaquant n'atteint plus que l'application, sur un seul port.</p>
+<div class="step"><h4><span class="num">6.4</span> Test guidé : simuler la compromission du reverse-proxy</h4></div>
+{{ON:dmz|RP-DMZ|vous êtes « dans la peau » de l'attaquant qui a pris RP-DMZ}}
+<pre class="sh">$ nc -zv -w 3 192.168.20.20 8080
+OK: Connection to 192.168.20.20 8080 port succeeded!
+$ nc -zv -w 3 192.168.20.30 3306
+KO: timed out
+$ nc -zv -w 3 192.168.10.100 22
+KO: timed out</pre>
+<p>Même avec RP-DMZ compromis, l'attaquant ne peut atteindre qu'un seul service interne.</p>
+<div class="step"><h4><span class="num">6.5</span> Retrouver les blocages dans les journaux de FW-INT</h4></div>
+<p>Status &gt; System Logs &gt; Firewall : chaque tentative refusée est tracée (interface d'arrivée, source, destination, port). Exemple : <code>Block USERS 192.168.10.100:44012 → 192.168.20.20:22 TCP:S</code> ; <code>Block DMZ_LINK 172.16.50.10:39418 → 192.168.20.30:3306 TCP:S</code>.</p>
+{{Q:6.1|Recopiez trois lignes de journal correspondant à des tests refusés. Pour chacune, indiquez le test concerné (T5, T12…) et la règle qui a bloqué.}}
+<div class="step"><h4><span class="num">6.6</span> Tests autonomes</h4></div>
+<p>Réalisez les autres tests de la même façon (modifiez le bridge ou le VLAN Tag de KALI dans Proxmox selon la colonne « Depuis »). <b>Notez ce que vous attendez avant de lancer la commande.</b> Pour changer de VLAN : Hardware &gt; Network Device &gt; Edit, puis <code>sudo dhclient -r eth0 ; sudo dhclient eth0</code> (VLAN 10 et 40) ou 192.168.30.10/24 à la main (VLAN 30).</p>
+<div class="step"><h4><span class="num">6.7</span> Fiche de recette</h4></div>
+<div class="tw"><table><tr><th>N°</th><th>Depuis</th><th>Commande</th><th>Attendu</th><th>Obtenu</th><th>OK / KO</th></tr>
+<tr><td>T1</td><td>KALI-EXT</td><td><code>nmap -Pn -p- --min-rate 1000 203.0.113.1</code></td><td><input data-save="t6-T1-a" style="width:100%"></td><td><input data-save="t6-T1-o" style="width:100%"></td><td><select data-save="t6-T1-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T2</td><td>KALI-EXT</td><td><code>nmap -Pn -sV -p 80,443 203.0.113.1</code></td><td><input data-save="t6-T2-a" style="width:100%"></td><td><input data-save="t6-T2-o" style="width:100%"></td><td><select data-save="t6-T2-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T3</td><td>KALI-EXT</td><td><code>curl -k -I https://203.0.113.1</code></td><td><input data-save="t6-T3-a" style="width:100%"></td><td><input data-save="t6-T3-o" style="width:100%"></td><td><select data-save="t6-T3-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T4</td><td>KALI-EXT</td><td><code>nmap -Pn -p 22,3306,8080 192.168.20.20 192.168.20.30</code></td><td><input data-save="t6-T4-a" style="width:100%"></td><td><input data-save="t6-T4-o" style="width:100%"></td><td><select data-save="t6-T4-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T5</td><td>KALI (VLAN 10)</td><td><code>nmap -Pn -p 22,80,8080,3306 192.168.20.20 192.168.20.30</code></td><td><input data-save="t6-T5-a" style="width:100%"></td><td><input data-save="t6-T5-o" style="width:100%"></td><td><select data-save="t6-T5-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T6</td><td>KALI (VLAN 10)</td><td><code>nc -zv -w 3 192.168.30.1 443</code></td><td><input data-save="t6-T6-a" style="width:100%"></td><td><input data-save="t6-T6-o" style="width:100%"></td><td><select data-save="t6-T6-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T7</td><td>KALI (VLAN 10)</td><td><code>curl -I http://192.168.20.20:8080</code></td><td><input data-save="t6-T7-a" style="width:100%"></td><td><input data-save="t6-T7-o" style="width:100%"></td><td><select data-save="t6-T7-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T8</td><td>KALI (VLAN 10)</td><td><code>curl -I http://203.0.113.100</code></td><td><input data-save="t6-T8-a" style="width:100%"></td><td><input data-save="t6-T8-o" style="width:100%"></td><td><select data-save="t6-T8-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T9</td><td>KALI (VLAN 40)</td><td><code>curl -m 5 http://192.168.20.20:8080</code></td><td><input data-save="t6-T9-a" style="width:100%"></td><td><input data-save="t6-T9-o" style="width:100%"></td><td><select data-save="t6-T9-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T10</td><td>KALI (VLAN 40)</td><td><code>curl -I http://203.0.113.100</code></td><td><input data-save="t6-T10-a" style="width:100%"></td><td><input data-save="t6-T10-o" style="width:100%"></td><td><select data-save="t6-T10-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T11</td><td>RP-DMZ</td><td><code>nc -zv -w 3 192.168.20.20 8080</code></td><td><input data-save="t6-T11-a" style="width:100%"></td><td><input data-save="t6-T11-o" style="width:100%"></td><td><select data-save="t6-T11-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T12</td><td>RP-DMZ</td><td><code>nc -zv -w 3 192.168.20.30 3306</code></td><td><input data-save="t6-T12-a" style="width:100%"></td><td><input data-save="t6-T12-o" style="width:100%"></td><td><select data-save="t6-T12-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T13</td><td>RP-DMZ</td><td><code>nc -zv -w 3 192.168.10.100 22</code></td><td><input data-save="t6-T13-a" style="width:100%"></td><td><input data-save="t6-T13-o" style="width:100%"></td><td><select data-save="t6-T13-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T14</td><td>KALI (VLAN 30)</td><td><code>nc -zv -w 3 192.168.20.30 22</code></td><td><input data-save="t6-T14-a" style="width:100%"></td><td><input data-save="t6-T14-o" style="width:100%"></td><td><select data-save="t6-T14-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr><tr><td>T15</td><td>KALI (VLAN 10)</td><td><code>nc -zv -w 3 192.168.20.30 22</code></td><td><input data-save="t6-T15-a" style="width:100%"></td><td><input data-save="t6-T15-o" style="width:100%"></td><td><select data-save="t6-T15-k"><option value="">—</option><option>OK</option><option>KO</option></select></td></tr>
+</table></div>
+{{Q:6.2|Relancez depuis le VLAN 10 l'analyse du TP1 (<code>nmap -Pn -p 22,80,3306,8080</code> sur les serveurs) : comparez le nombre de ports atteignables avec le réseau plat.}}
+<div class="step"><h4><span class="num">6.8</span> Rapport d'audit (3 constats)</h4></div>
+<p>Rédigez trois constats issus de vos tests : <b>une réussite de cloisonnement, une anomalie ou faiblesse restante, une amélioration possible</b>. Pour chacun : preuve (test, capture), risque, recommandation.</p>
+<div class="q"><b class="k">Constat 1</b> — réussite<textarea data-save="t6-c1"></textarea></div>
+<div class="q"><b class="k">Constat 2</b> — faiblesse restante<textarea data-save="t6-c2"></textarea></div>
+<div class="q"><b class="k">Constat 3</b> — amélioration possible<textarea data-save="t6-c3"></textarea></div>
+{{CHK:tp6|La fiche de recette est entièrement remplie, les écarts sont expliqués;;Chaque test refusé est retrouvé dans les journaux (captures);;Le rapport d'audit contient trois constats argumentés}}
+{{DONE:tp6}}
+
+<h2 id="tp7">TP7 — Durcissement et journalisation</h2>
+<p><b>Durée</b> 2 h · <b>Objectif</b> ajouter la défense en profondeur côté serveurs (base, SSH, pare-feu local, services inutiles) et centraliser les journaux · <b>Prérequis</b> TP6, accès à la console Proxmox en cas de verrouillage SSH · <b>À rendre</b> captures, journaux centralisés, réponses.</p>
+<div class="step"><h4><span class="num">7.1</span> Moindre privilège sur la base de données</h4></div>
+{{ON:srv|SRV-BDD|console Proxmox}}
+<pre class="sh">$ sudo mysql -e "DROP USER 'app'@'%'; CREATE USER 'app'@'192.168.20.20' IDENTIFIED BY 'Un_Mot_De_Passe_Robuste_2026'; GRANT SELECT ON clients.* TO 'app'@'192.168.20.20'; FLUSH PRIVILEGES;"
+$ sudo mysql -e "SELECT user, host FROM mysql.user WHERE user='app';"
+OK: app | 192.168.20.20</pre>
+<p>L'utilisateur ne peut plus se connecter que depuis SRV-APP et ne peut plus que lire.</p>
+<div class="step"><h4><span class="num">7.2</span> Pare-feu local avec ufw</h4></div>
+<div class="box ko"><b>Attention au verrouillage</b>Autorisez SSH avant d'activer ufw. En cas d'erreur, la console Proxmox reste utilisable.</div>
+<pre class="sh">$ sudo ufw default deny incoming
+$ sudo ufw default allow outgoing
+$ sudo ufw allow from 192.168.30.10 to any port 22 proto tcp
+$ sudo ufw allow from 192.168.20.20 to any port 3306 proto tcp
+$ sudo ufw enable
+$ sudo ufw status verbose
+OK: 22/tcp ALLOW IN 192.168.30.10 · 3306/tcp ALLOW IN 192.168.20.20</pre>
+<div class="step"><h4><span class="num">7.3</span> SSH par clés, sans mot de passe</h4></div>
+{{ON:kali|KALI|poste d'administration : VLAN Tag 30, 192.168.30.10/24}}
+<pre class="sh">$ ssh-keygen -t ed25519
+$ ssh-copy-id etudiant@192.168.20.30
+$ ssh etudiant@192.168.20.30
+OK: connexion sans mot de passe</pre>
+<p>Puis sur SRV-BDD, éditez <code>/etc/ssh/sshd_config</code> :</p>
+<pre class="sh">PermitRootLogin no
+PasswordAuthentication no
+AllowUsers etudiant
+MaxAuthTries 3
+$ sudo sshd -t &amp;&amp; sudo systemctl reload ssh</pre>
+<p><b>Toujours tester dans un second terminal avant de fermer la session.</b> Depuis un poste sans la clé, la connexion doit être refusée : <code>Permission denied (publickey)</code>.</p>
+<div class="step"><h4><span class="num">7.4</span> Réduire la surface d'attaque web</h4></div>
+{{ON:srv|SRV-APP|console}}
+<pre class="sh">$ sudo rm /etc/nginx/sites-enabled/default
+$ sudo systemctl reload nginx
+$ ss -tlnp
+OK: 0.0.0.0:8080 (nginx) · 0.0.0.0:22 (sshd)   → le port 80 n'écoute plus</pre>
+{{ON:dmz|RP-DMZ|masquer la version et ajouter des en-têtes de sécurité}}
+<pre class="sh">## dans /etc/nginx/nginx.conf, bloc http { ... } :
+server_tokens off;
+## dans /etc/nginx/conf.d/proxy.conf, bloc 'listen 443' :
+add_header Strict-Transport-Security 'max-age=31536000' always;
+add_header X-Content-Type-Options nosniff;
+$ sudo nginx -t &amp;&amp; sudo systemctl reload nginx
+$ curl -k -I https://localhost | head -n 5
+OK: Server: nginx · Strict-Transport-Security: max-age=31536000 · X-Content-Type-Options: nosniff</pre>
+<p>Mettez aussi les serveurs à jour (<code>sudo apt update &amp;&amp; sudo apt full-upgrade -y</code>) pendant une courte fenêtre d'accès Internet via le bridge d'installation.</p>
+<div class="step"><h4><span class="num">7.5</span> Centraliser les journaux dans SRV-LOG</h4></div>
+{{ON:srv|SRV-LOG|recevoir les journaux}}
+<pre class="sh">$ sudo nano /etc/rsyslog.d/10-recevoir.conf
+module(load="imudp")
+input(type="imudp" port="514")
+module(load="imtcp")
+input(type="imtcp" port="514")
+$ sudo systemctl restart rsyslog
+$ ss -ulnp | grep 514
+OK: 0.0.0.0:514 rsyslogd</pre>
+{{ON:srv|SRV-BDD|envoyer ses journaux}}
+<pre class="sh">$ echo '*.* @@192.168.30.20:514' | sudo tee /etc/rsyslog.d/90-envoi.conf
+$ sudo systemctl restart rsyslog
+$ logger "test centralisation depuis srv-bdd"</pre>
+<p>Autorisez ce flux sur FW-INT, interface <b>SERVERS</b> : Pass, TCP, source <code>SRV_BDD</code>, destination <code>SRV_LOG</code>, port 514, Log coché, <i>avant</i> la règle de blocage. Puis faites envoyer les journaux du pare-feu : Status &gt; System Logs &gt; Settings &gt; Enable Remote Logging, serveur <code>192.168.30.20:514</code>, Firewall Events.</p>
+<pre class="sh">## sur SRV-LOG
+$ sudo grep -E "srv-bdd|filterlog" /var/log/syslog | tail -n 3
+OK: srv-bdd etudiant: test centralisation depuis srv-bdd
+OK: fw-int filterlog[27214]: ... vtnet1.10,match,block,in,4 ...</pre>
+<div class="step"><h4><span class="num">7.6</span> Sauvegarder</h4></div>
+{{ON:pve|PROXMOX|console de pve1}}
+<pre class="sh">$ vzdump 100 101 --storage local --mode snapshot
+OK: Backup job finished successfully</pre>
+<p>Sur chaque pare-feu : Diagnostics &gt; Backup &amp; Restore &gt; <i>Download configuration as XML</i> ; conservez <code>config-fw-ext.xml</code> et <code>config-fw-int.xml</code>.</p>
+{{Q:7.1|Relancez T12 (RP-DMZ vers SRV-BDD). Le blocage est-il assuré une ou deux fois (pare-feu réseau, pare-feu local) ? Quel principe du cours cela illustre-t-il ?}}
+{{Q:7.2|Pourquoi limiter l'utilisateur de la base à SELECT et à l'adresse de SRV-APP ? Quel scénario d'attaque cela empêche-t-il ?}}
+{{Q:7.3|Provoquez un scan depuis KALI vers 192.168.20.20 : retrouvez l'événement dans SRV-LOG. Quel intérêt la centralisation des journaux a-t-elle en cas de compromission d'un serveur ?}}
+{{CHK:tp7|SRV-BDD : utilisateur restreint, ufw actif, SSH par clés uniquement;;SRV-APP n'écoute plus que sur 8080 (+ SSH). RP-DMZ masque sa version et envoie les en-têtes de sécurité;;Les événements de FW-INT et de SRV-BDD arrivent dans SRV-LOG;;Sauvegardes vzdump et configurations pfSense téléchargées}}
+{{DONE:tp7}}
+
+<h2 id="tp8">TP8 — Projet final et livrable</h2>
+<p><b>Durée</b> 2 h + travail personnel · <b>Objectif</b> rassembler et justifier le travail : produire le dossier d'architecture sécurisée de l'entreprise fictive « Lab SA » · <b>À rendre</b> dossier PDF (schéma annoté, matrice, recette, rapport, justification) + sauvegardes.</p>
+<div class="box key"><b>Scénario</b>Lab SA compte 60 salariés. Elle publie un portail client, héberge une base de clients et accueille régulièrement des visiteurs. Le DSI vous demande un dossier démontrant que l'architecture protège le portail, la base et le poste d'un salarié, et que les flux sont maîtrisés.</div>
+<h3>8.1 Réaliser le schéma annoté avec draw.io</h3>
+<ol>
+<li>Ouvrez <b>app.diagrams.net</b> (ou draw.io Desktop), nouveau diagramme vierge.</li>
+<li>Dessinez les zones comme des rectangles de couleur : Internet (gris), DMZ (orange), VLAN Utilisateurs (bleu), Serveurs (vert), Management (violet), Guests (gris clair).</li>
+<li>Placez les équipements : FW-EXT, FW-INT, switch virtuel (trunk 802.1Q), RP-DMZ, SRV-APP, SRV-BDD, SRV-LOG, postes.</li>
+<li>Tracez les flux par des flèches orientées du côté qui <b>initie</b> la connexion, avec protocole et port (« TCP 443 », « TCP 8080 »).</li>
+<li>Ajoutez le plan d'adressage et les numéros de VLAN, une légende des couleurs, et numérotez les flux en renvoyant à la matrice.</li>
+<li>Exportez : File &gt; Export as &gt; PDF (ou PNG).</li>
+</ol>
+<h3>8.2 Assembler les autres pièces du dossier</h3>
+<div class="tw"><table><tr><th>Pièce</th><th>D'où elle vient</th><th>À vérifier</th></tr>
+<tr><td>Matrice de flux finale</td><td>Étape 5.1, mise à jour avec les règles réellement déployées</td><td>Une ligne par règle, justification présente</td></tr>
+<tr><td>Fiche de recette</td><td>Étape 6.7 complétée</td><td>Attendu = obtenu ; écarts expliqués ; captures et journaux associés</td></tr>
+<tr><td>Rapport d'audit</td><td>Étape 6.8</td><td>3 constats : preuve, risque, recommandation</td></tr>
+<tr><td>Annexes techniques</td><td>Exports XML des pare-feu, résultat de vzdump</td><td>Fichiers datés et nommés</td></tr></table></div>
+<h3>8.3 Rédiger la justification des choix (1 à 2 pages)</h3>
+<ul>
+<li>Contexte et besoins : services à exposer, données sensibles ;</li>
+<li>Risques identifiés : intrusion externe, propagation latérale, rançongiciel, fuite de données ;</li>
+<li>Choix d'architecture : pourquoi un double pare-feu, pourquoi ces VLAN, pourquoi tel service en DMZ ; alternatives écartées ;</li>
+<li>Politique de filtrage : deny all, moindre privilège, ports retenus, journalisation ;</li>
+<li>Mesures complémentaires : durcissement, SSH par clés, supervision, sauvegardes ; ce qui reste à faire (limites).</li>
+</ul>
+<div class="q"><b class="k">Brouillon de la justification</b><textarea data-save="t8-justif" style="min-height:240px"></textarea></div>
+<h3>8.4 Défis facultatifs</h3>
+<ul>
+<li>Ajouter un WAF (ModSecurity) sur RP-DMZ et tester une injection SQL simple sur l'application de test ;</li>
+<li>Installer Suricata sur FW-EXT (IDS) et observer les alertes générées par un scan nmap ;</li>
+<li>Ajouter un accès VPN WireGuard en DMZ pour un administrateur distant, avec accès limité au VLAN 30 ;</li>
+<li>Mettre en place une seconde DMZ pour un relais de messagerie et rédiger les règles associées ;</li>
+<li>Reproduire l'architecture sur du matériel réel avec un switch Cisco (annexe C).</li>
+</ul>
+{{Q:8.1|En une dizaine de lignes, argumentez pour le DSI : pourquoi cette architecture est-elle plus sûre qu'un réseau plat ? Quelles sont ses limites ?}}
+{{DONE:tp8}}
+
+<h2 id="tp-annexes">Annexes</h2>
+<h3>A — Aide-mémoire des commandes</h3>
+<div class="tw"><table><tr><th>Besoin</th><th>Commande</th></tr>
+<tr><th colspan="2">Proxmox (sur l'hôte)</th></tr>
+<tr><td>Lister les VM</td><td><code>qm list</code></td></tr>
+<tr><td>Démarrer / arrêter une VM</td><td><code>qm start 110</code> ; <code>qm shutdown 110</code></td></tr>
+<tr><td>Cloner un gabarit</td><td><code>qm clone 900 120 --name srv-app --full</code></td></tr>
+<tr><td>Changer le VLAN d'une carte</td><td><code>qm set 130 --net0 virtio,bridge=vmbr2,tag=40</code></td></tr>
+<tr><td>Snapshot / retour arrière</td><td><code>qm snapshot 130 tp3-ok</code> ; <code>qm rollback 130 tp3-ok</code></td></tr>
+<tr><td>Sauvegarder</td><td><code>vzdump 100 101 --storage local --mode snapshot</code></td></tr>
+<tr><td>Bridges et VLAN</td><td><code>ip -br link show type bridge</code> ; <code>bridge vlan show</code></td></tr>
+<tr><th colspan="2">Linux (serveurs et postes)</th></tr>
+<tr><td>Adresses, routes</td><td><code>ip -br a</code> ; <code>ip route</code></td></tr>
+<tr><td>Ports en écoute</td><td><code>ss -tlnp</code></td></tr>
+<tr><td>Tester un port TCP</td><td><code>nc -zv -w 3 192.168.20.20 8080</code></td></tr>
+<tr><td>Tester une page web</td><td><code>curl -I http://hôte:port</code> ; <code>curl -k -I https://hôte</code></td></tr>
+<tr><td>Chemin réseau</td><td><code>traceroute 203.0.113.100</code></td></tr>
+<tr><td>Capturer le trafic</td><td><code>sudo tcpdump -ni ens18 host 192.168.20.20 and port 8080</code></td></tr>
+<tr><td>Pare-feu local</td><td><code>sudo ufw status verbose</code></td></tr>
+<tr><td>Journaux</td><td><code>sudo journalctl -u nginx -n 50</code> ; <code>tail -f /var/log/nginx/access.log</code></td></tr>
+<tr><th colspan="2">nmap (Kali)</th></tr>
+<tr><td>Découvrir les hôtes</td><td><code>nmap -sn 192.168.100.0/24</code></td></tr>
+<tr><td>Scanner sans ping préalable</td><td><code>nmap -Pn -p 22,80,443 cible</code></td></tr>
+<tr><td>Tous les ports TCP</td><td><code>nmap -Pn -p- --min-rate 1000 cible</code></td></tr>
+<tr><td>Versions de services</td><td><code>nmap -Pn -sV -p 80,443 cible</code></td></tr>
+<tr><td>Enregistrer le résultat</td><td><code>nmap -Pn -oN resultat.txt cible</code></td></tr></table></div>
+<h3>B — Dépannage</h3>
+<div class="tw"><table><tr><th>Symptôme</th><th>Cause probable</th><th>Vérification et solution</th></tr>
+<tr><td>La VM n'a pas d'adresse DHCP</td><td>Mauvais bridge ou VLAN Tag ; DHCP non activé</td><td>Proxmox : bridge et tag ; pfSense : Services &gt; DHCP Server de la bonne interface</td></tr>
+<tr><td>Tout est bloqué, même le ping de la passerelle</td><td>Aucune règle sur l'interface (deny all)</td><td>Normal tant qu'aucune règle n'existe ; ajoutez une règle ICMP vers « This Firewall »</td></tr>
+<tr><td>Les paquets VLAN n'arrivent pas au pare-feu</td><td>Bridge non « VLAN aware » ; carte du pare-feu avec un tag</td><td>vmbr2 : VLAN aware coché ; carte trunk de FW-INT sans tag</td></tr>
+<tr><td>Connexion TCP lente ou qui se coupe</td><td>Offload de checksum avec VirtIO</td><td>System &gt; Advanced &gt; Networking : désactiver le hardware checksum offload</td></tr>
+<tr><td>Interface web du pare-feu inaccessible</td><td>Mauvaise adresse ou règle supprimée</td><td>Console : option 8, <code>pfctl -d</code> ; rétablir avec <code>pfctl -e</code></td></tr>
+<tr><td>RP-DMZ ne joint pas SRV-APP</td><td>Route 192.168.0.0/16 manquante ; règle DMZ_LINK absente</td><td><code>ip route</code> sur RP-DMZ ; journal de FW-INT filtré sur 172.16.50.10</td></tr>
+<tr><td>Publication web impossible depuis KALI-EXT</td><td>Règle WAN absente ; blocage bogon / RFC1918 encore coché</td><td>Firewall &gt; Rules &gt; WAN ; interface WAN : décocher les deux blocages</td></tr>
+<tr><td>Réponses qui repartent par FW-EXT</td><td>reply-to actif sur DMZ_LINK</td><td>FW-INT : System &gt; Advanced &gt; Firewall &amp; NAT : « Disable reply-to on WAN rules »</td></tr>
+<tr><td>nmap annonce « host seems down »</td><td>Le pare-feu bloque le ping</td><td>Ajouter <code>-Pn</code></td></tr>
+<tr><td>Les clients internes ne joignent pas « Internet »</td><td>NAT sortant absent sur FW-EXT ; route retour manquante</td><td>NAT &gt; Outbound hybride pour 192.168.0.0/16 ; route statique sur FW-EXT</td></tr></table></div>
+<h3>C — Équivalent sur un switch Cisco</h3>
+<pre class="sh">vlan 10
+ name USERS
+vlan 20
+ name SERVEURS
+vlan 30
+ name MANAGEMENT
+vlan 40
+ name GUESTS
+!
+interface fastEthernet 0/1
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree bpduguard enable
+ switchport port-security
+!
+interface gigabitEthernet 0/1
+ description TRUNK vers FW-INT
+ switchport mode trunk
+ switchport trunk allowed vlan 10,20,30,40
+ switchport trunk native vlan 99
+!
+interface range fastEthernet 0/10 - 24
+ switchport access vlan 99
+ shutdown</pre>
+<p>Correspondance : le bridge « VLAN aware » de Proxmox joue le rôle du switch ; le VLAN Tag d'une carte VM correspond à un port <i>access</i> ; une carte sans tag reliée à FW-INT correspond à un port <i>trunk</i>.</p>
+<h3>D — Grille d'évaluation</h3>
+<div class="tw"><table><tr><th>Compétence évaluée</th><th>Indicateurs</th><th>Points</th></tr>
+<tr><td>Plateforme et VLAN (TP0, TP3)</td><td>Bridges corrects, VLAN fonctionnels, DHCP par VLAN, gabarits exploités</td><td>3</td></tr>
+<tr><td>Pare-feu et zones (TP2)</td><td>Zones nommées, deny all, routage entre pare-feu</td><td>3</td></tr>
+<tr><td>DMZ et reverse-proxy (TP4)</td><td>Publication HTTPS, NAT, flux DMZ limité au strict nécessaire</td><td>3</td></tr>
+<tr><td>Matrice et règles (TP5)</td><td>Matrice cohérente et justifiée, règles conformes au moindre privilège</td><td>4</td></tr>
+<tr><td>Audit et recette (TP6)</td><td>Tests pertinents, écarts expliqués, preuves dans les journaux</td><td>3</td></tr>
+<tr><td>Durcissement et journaux (TP7)</td><td>SSH par clés, ufw, utilisateur restreint, journaux centralisés</td><td>2</td></tr>
+<tr><td>Dossier final (TP8)</td><td>Schéma annoté lisible, justification argumentée, rigueur</td><td>2</td></tr>
+<tr><th>Total</th><th></th><th>20</th></tr></table></div>
+<p class="small">Les questions, les snapshots et les captures servent de support à l'oral : l'enseignant peut demander de reproduire un test (par exemple T9 ou T12) en direct.</p>
