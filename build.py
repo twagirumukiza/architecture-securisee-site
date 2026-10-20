@@ -4,18 +4,20 @@ import re, pathlib, json
 ROOT=pathlib.Path(__file__).parent; SRC=ROOT/"src"; OUT=ROOT/"site"
 NAV=[("index.html","Accueil"),("cours.html","① Cours"),("tp.html","② TP"),("quiz.html","③ Quiz"),("correction.html","Corrigé"),("telechargements.html","PDF")]
 def page(fname,title,body,toc=True,extra_head="",extra_js=""):
-    nav="".join(f'<a href="{h}"{" class=on" if h==fname else ""}>{t}</a>' for h,t in NAV)
-    aside='<aside class="toc"><b>Sommaire</b><div class="links"></div></aside>' if toc else ""
+    nav="".join(f'<a href="{h}"{" class=on aria-current=page" if h==fname else ""}>{t}</a>' for h,t in NAV)
+    aside='<aside class="toc" id="toc" aria-label="Sommaire"><div class="toc-head"><b>Sommaire</b><button type="button" class="toc-close" id="toc-close" aria-label="Masquer le sommaire" title="Masquer le sommaire">✕</button></div><div class="links"></div></aside>' if toc else ""
     cls="wrap" if toc else "wrap single"
+    fab='<button type="button" class="toc-fab" id="toc-fab" aria-controls="toc" aria-expanded="false"><span aria-hidden="true">☰</span> Sommaire</button><div class="toc-backdrop" id="toc-backdrop"></div>' if toc else ""
     return f'''<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — Architecture sécurisée · BTS SIO 2</title>
 <meta name="description" content="Cours, travaux pratiques (Proxmox, pfSense, Kali) et quiz noté sur l'architecture sécurisée : DMZ, VLAN, pare-feu. BTS SIO 2 — par Twagirumukiza.">
 <link rel="stylesheet" href="assets/style.css">{extra_head}</head><body>
-<header class="topbar"><div class="in"><a class="brand" href="index.html">Architecture sécurisée<small>BTS SIO 2 · Bloc cybersécurité</small></a><nav class="main">{nav}</nav></div></header>
+<header class="topbar"><div class="in"><a class="brand" href="index.html">Architecture sécurisée<small>BTS SIO 2 · Bloc cybersécurité</small></a><button type="button" class="burger" id="burger" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="mainnav"><span></span><span></span><span></span></button><nav class="main" id="mainnav" aria-label="Navigation principale">{nav}</nav></div></header>
 <div class="{cls}">{aside}<main>
 {body}
 </main></div>
+{fab}
 <footer class="site"><div class="in"><span>© 2026 <b>Twagirumukiza</b> — Support pédagogique BTS SIO 2 · Cybersécurité</span><span><a data-linkedin href="#" target="_blank" rel="noopener">Suivre Twagirumukiza sur LinkedIn ↗</a></span></div></footer>
 <script src="assets/config.js"></script><script src="assets/ids.js"></script><script src="assets/app.js"></script>{extra_js}
 </body></html>'''
@@ -36,7 +38,7 @@ def _sh(m):
     return '<pre>'+"\n".join(o)+'</pre>'
 def macros(t):
     t=re.sub(r'<pre class="sh">(.*?)</pre>',_sh,t,flags=re.S)
-    t=re.sub(r'\{\{ON:(\w+)\|([^|}]+)\|?([^}]*)\}\}',lambda m:f'<div class="on-bar on-{m.group(1)}">Sur : {m.group(2)}'+(f' <span>— {m.group(3)}</span>' if m.group(3) else '')+'</div>',t)
+    t=re.sub(r'\{\{ON:([\w-]+)\|([^|}]+)\|?([^}]*)\}\}',lambda m:f'<div class="on-bar on-{m.group(1)}">Sur : {m.group(2)}'+(f' <span>— {m.group(3)}</span>' if m.group(3) else '')+'</div>',t)
     def q(m):
         return f'<div class="q"><b class="k">Question {m.group(1)}.</b> {m.group(2)}<textarea data-save="q-{m.group(1)}" placeholder="Votre réponse (enregistrée automatiquement)…"></textarea></div>'
     t=re.sub(r'\{\{Q:([\d.]+)\|(.*?)\}\}',q,t,flags=re.S)
@@ -45,14 +47,14 @@ def macros(t):
         r='<div class="checks"><b>Validation de fin de TP</b>'
         for i,x in enumerate(items): r+=f'<label><input type="checkbox" data-save="chk-{m.group(1)}-{i}"> {x}</label>'
         return r+'</div>'
-    t=re.sub(r'\{\{CHK:(\w+)\|(.*?)\}\}',chk,t,flags=re.S)
+    t=re.sub(r'\{\{CHK:([\w-]+)\|(.*?)\}\}',chk,t,flags=re.S)
     return t
 
 ids={"cours":[],"tp":[]}
 def frag(name):
     t=(SRC/name).read_text(encoding="utf-8")
-    t=re.sub(r"\{\{READ:(\w+)\}\}",lambda m:f'<div class="readdone"><input type="checkbox" id="rd-{m.group(1)}" data-track="{m.group(1)}" data-sec="{m.group(1)}"><label for="rd-{m.group(1)}">J\'ai lu cette partie</label></div>',t)
-    t=re.sub(r"\{\{DONE:(\w+)\}\}",lambda m:f'<div class="readdone"><input type="checkbox" id="rd-{m.group(1)}" data-track="{m.group(1)}" data-sec="{m.group(1)}"><label for="rd-{m.group(1)}">J\'ai terminé ce TP</label></div>',t)
+    t=re.sub(r"\{\{READ:([\w-]+)\}\}",lambda m:f'<div class="readdone"><input type="checkbox" id="rd-{m.group(1)}" data-track="{m.group(1)}" data-sec="{m.group(1)}"><label for="rd-{m.group(1)}">J\'ai lu cette partie</label></div>',t)
+    t=re.sub(r"\{\{DONE:([\w-]+)\}\}",lambda m:f'<div class="readdone"><input type="checkbox" id="rd-{m.group(1)}" data-track="{m.group(1)}" data-sec="{m.group(1)}"><label for="rd-{m.group(1)}">J\'ai terminé ce TP</label></div>',t)
     return macros(t)
 def collect(kind,t):
     for m in re.finditer(r'data-track="([^"]+)"',t):
