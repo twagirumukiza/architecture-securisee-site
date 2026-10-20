@@ -94,7 +94,7 @@
 <tr><td>KALI-INT (141)</td><td>Poste interne compromis / audit</td><td>vmbr2, tag 10 ou 40</td><td>DHCP</td></tr>
 </table></div>
 <p>Gabarits : VM 900 (<code>tpl-debian</code>) et VM 901 (<code>tpl-kali</code>). <b>Convention</b> : un snapshot à la fin de chaque TP (<code>tp2-ok</code>, <code>tp3-ok</code>…) pour revenir en arrière en cas d'erreur.</p>
-{{DONE:tp-intro}}
+<div class="readdone"><input type="checkbox" id="rd-tp-intro" data-track="tp-intro" data-sec="tp-intro"><label for="rd-tp-intro">J'ai terminé ce TP</label></div>
 
 <h2 id="tp-pc">Option : le laboratoire sur son propre PC</h2>
 <p>Proxmox VE est installé dans une machine virtuelle appelée <b>pve1</b>, et toutes les machines du TP tournent à l'intérieur (virtualisation imbriquée). Machines environ 30 à 50 % plus lentes qu'avec Proxmox sur un serveur : démarrez-les progressivement. Un PC à processeur Apple (M1 et suivants) ne convient pas (Proxmox et Kali du TP sont en x86). La virtualisation (Intel VT-x ou AMD-V) doit être activée dans le BIOS/UEFI.</p>
@@ -221,7 +221,7 @@ iface vmbr9 inet static
 </ul>
 <div class="box ko"><b>Si cela ne fonctionne pas</b>« KVM virtualisation unavailable » : imbrication non active (étape V). Tout est très lent : trop de VM allumées ou disque mécanique. Pas d'accès à https://adresse:8006 : VirtualBox, vérifier la redirection de port ; sinon <code>ip -br a</code> sur la console de pve1. Pas d'Internet sur vmbr9 : vérifier MASQUERADE, l'adresse 10.99.99.x, la passerelle et le DNS.</div>
 <div class="checks"><b>Validation de fin de TP</b><label><input type="checkbox" data-save="chk-pc-0"> La VM pve1 démarre et l'interface web de Proxmox s'ouvre depuis le navigateur du PC</label><label><input type="checkbox" data-save="chk-pc-1"> /dev/kvm est présent dans pve1</label><label><input type="checkbox" data-save="chk-pc-2"> Le bridge vmbr9 fonctionne (10.99.99.1/24)</label><label><input type="checkbox" data-save="chk-pc-3"> Le profil (standard ou léger) est choisi</label></div>
-{{DONE:tp-pc}}
+<div class="readdone"><input type="checkbox" id="rd-tp-pc" data-track="tp-pc" data-sec="tp-pc"><label for="rd-tp-pc">J'ai terminé ce TP</label></div>
 
 <h2 id="tp0">TP0 — Préparer la plateforme Proxmox</h2>
 <p><b>Durée</b> 1 h 30 à 2 h · <b>Objectif</b> disposer d'un hôte Proxmox avec cinq bridges, un gabarit Debian, un gabarit Kali et des serveurs prêts à l'emploi · <b>À rendre</b> captures (bridges, VM, gabarits) et réponses aux questions.</p>
